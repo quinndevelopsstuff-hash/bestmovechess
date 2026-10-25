@@ -15,6 +15,8 @@ The same app that serves the web page serves a small JSON API.
 |--------|------------|---------------------------------------------|
 | GET    | `/move`    | Best move for a position given as FEN       |
 | POST   | `/move`    | Recognise a board photo, then best move     |
+| GET    | `/img`     | PNG/SVG diagram of a position and best move |
+| GET    | `/img/error` | PNG/SVG image explaining an error code    |
 | GET    | `/healthz` | Liveness check                              |
 
 ## Conventions
@@ -82,6 +84,9 @@ Send `multipart/form-data`:
 | `castling` | no       | Castling rights still available, a subset of `KQkq` in that order (e.g. `Kq`), or `-`. Default `-` |
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
 | `depth`    | no       | As for `GET`                                                         |
+| `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
+| `flip`     | no       | Screenshots: `auto` (default) lets chessfen guess whether Black is at the bottom; `true`/`false` forces it |
+| `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
 
 Castling and en passant default to none because they can't be seen in a photo.
 
@@ -109,13 +114,16 @@ It returns every field of `GET /move`, plus:
 | Field          | Type   | Meaning |
 |----------------|--------|---------|
 | `detected`     | string | Recognised piece placement (the first FEN field) |
-| `confidence`   | number | 0–1 estimate that the **whole board** is right. On held-out test photos every board at ≥ 0.8 was fully correct, and below 0.5 only about half were |
-| `squares`      | object | Model confidence for the piece chosen on each square. Values top out near 0.95, because the model was trained that way |
-| `uncertain`    | array  | Squares below 0.85, the ones most worth checking |
-| `alternatives` | object | For squares below 0.9: the model's top guesses, e.g. `{"f6": [["n", 0.74], ["b", 0.21]]}` |
-| `repairs`      | array  | Changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns` |
+| `confidence`   | number | 0–1 estimate that the **whole board** is right (photos), or the weakest square's confidence (screenshots). On held-out test photos every board at ≥ 0.8 was fully correct, and below 0.5 only about half were |
+| `squares`      | object | Confidence for the piece chosen on each square. Photos: model probability (tops out near 0.95, because the model was trained that way). Screenshots: chessfen's verdict, scaled so that below 0.6 means chessfen doubted it |
+| `uncertain`    | array  | The squares most worth checking: photo squares below 0.85, or the squares chessfen doubted |
+| `alternatives` | object | Photos, for squares below 0.9: the model's top guesses, e.g. `{"f6": [["n", 0.74], ["b", 0.21]]}`. Empty for screenshots |
+| `repairs`      | array  | Photos: changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns`. Always empty for screenshots: an illegal screenshot reading comes back as an `illegal_position` error with the board, so you can correct it |
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
+| `source`       | string | Which recognizer ran: `screenshot` or `camera` |
+| `flipped`      | bool   | Screenshots: the board was read with Black at the bottom (`corners` then start at the bottom-right) |
+| `orientation`  | string / null | Screenshots: `chessfen` (chessfen guessed from where each side's pieces stand) or `requested` (the `flip` field); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
 taken from the side or from Black's end, the detected position may be rotated.
@@ -143,9 +151,141 @@ someone fix it:
  "detected": "1q1r4/r3b1k1/p1B1Q1p1/1pp5/2P2P2/2N3P1/PP3P2/R5K1", "confidence": 1.0, "...": "..."}
 ```
 
+### `source`: screenshots and photos
+
+There are two recognizers:
+
+- **`screenshot`**: [chessfen](https://github.com/sunfmin/chessfen) (pure pixel math, no
+  ML model), for flat digital boards such as a phone screenshot of a chess app. The board
+  is first found by its checker pattern and cropped out, so the surrounding UI doesn't
+  matter.
+- **`camera`**: the pretrained model for photos of a physical board.
+
+With `auto` (the default), an image containing a flat digital board, where squares of
+one colour are practically identical, goes to chessfen. Everything else goes to the photo
+model, as does a screenshot chessfen can't read (no board found, or an error). The
+response's `source` says which recognizer ran.
+
+For screenshots, only the piece placement comes from chessfen. Side to move, castling
+(default none) and en passant come from your fields. Squares chessfen doubted are listed
+in `uncertain`, however many there are; the reading is never swapped for the photo
+model's, which reads flat screenshots much worse.
+
+chessfen needs Python 3.13+. On older Pythons it isn't installed: `auto` sends
+everything to the photo model, and `source=screenshot` returns
+`501 recognition_unavailable`.
+
+### `flip`: board shown from Black's side
+
+For screenshots, chessfen guesses which side is at the bottom from where each colour's
+pieces stand. `flip=true` (Black at the bottom) or `flip=false` overrides it. The
+response's `flipped` and `orientation` say what was used. Camera photos ignore `flip`,
+because the photo model has its own orientation logic.
+
+### `img_out`: a diagram of the result
+
+With `img_out=true` the response gets one more field, `image_url`. It's an absolute
+link to [`GET /img`](#get-img) that draws the detected board with the best move:
+
+```sh
+curl -F image=@board.jpg -F turn=w -F img_out=true https://<your-host>/move
+```
+
+```json
+{"best": "c6d5", "san": "Bd5", "...": "...",
+ "image_url": "https://<your-host>/img?fen=1q1r4%2Fr3b1k1%2F...+w+-+-+0+1&best=c6d5&turn=w&eval=1.74"}
+```
+
+If the request fails, the JSON error gets an `image_url` pointing at
+[`/img/error`](#get-imgerror) with the matching code. For position problems it
+includes the detected FEN, and the code says what's wrong (for example
+`missing_king` rather than just `illegal_position`). Errors that happen before the
+form is read (`too_large`, `unsupported_media_type`, a malformed body) have no
+`image_url`, because `img_out` hasn't been seen yet.
+
+Links use `PUBLIC_BASE_URL` if it's set. Otherwise they're built from the
+`X-Forwarded-Proto` and `X-Forwarded-Host` headers (which `tailscale serve` sends),
+falling back to the `Host` header. Set `PUBLIC_BASE_URL` if you use another proxy
+that doesn't send them, or serve the app under a sub-path.
+
 ### Privacy
 
-Uploaded images are processed in memory and never stored or logged. See the README.
+Uploaded images are processed in memory and never stored or logged. Diagrams are drawn
+from the position on request, never stored, and never use your photo. See the README.
+
+## GET /img
+
+Draws a position as a clean diagram: the best move as an arrow, its from and to
+squares highlighted, and a caption such as **"Best: Nf3 · +0.45"** and "White to
+move" underneath. The board is shown from the side to move. It's stateless: the image
+is generated from the query parameters each time, and nothing is stored.
+
+| Param    | Required | Default | Meaning |
+|----------|----------|---------|---------|
+| `fen`    | yes      |         | Position. A full FEN, or just the piece placement |
+| `best`   | no       |         | Move to draw, UCI (e.g. `e2e4`); must be legal in the position |
+| `turn`   | no       | from FEN | `w` or `b`: overrides the FEN's side to move (and the orientation) |
+| `eval`   | no       |         | Evaluation for the caption, pawns from White's view (−1000 to 1000) |
+| `mate`   | no       |         | Mate-in-N for the caption (+ White mates, − Black mates); takes precedence over `eval` |
+| `format` | no       | `png`   | `png` or `svg` |
+| `size`   | no       | `480`   | Board width in pixels, 160–1024. The caption adds some height |
+
+```sh
+curl -G https://<your-host>/img -o move.png \
+  --data-urlencode 'fen=r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3' \
+  -d best=f1b5 -d eval=0.45
+```
+
+Without `best`, the board is drawn on its own. A finished game is captioned
+"Checkmate: Black wins." or "Stalemate: …".
+
+**Invalid input gets an error image, not JSON.** The response is still an image (in the
+requested format), so it shows up wherever the link is used:
+
+| Status | Image says | When |
+|-------:|------------|------|
+| 400 | Invalid FEN | `fen` can't be parsed |
+| 422 | Missing king, Too many kings, Pawn on back rank, Wrong side in check, … | The position is impossible; the board is drawn with the offending squares in red |
+| 422 | Illegal move | `best` isn't a legal move in the position; its squares are marked |
+| 422 | Bad request | Bad `format`, `size`, `turn`, `eval` or `mate`, or an overlong parameter |
+
+Responses are `image/png` or `image/svg+xml`, with `Cache-Control: public, max-age=86400`
+(the same URL always gives the same picture). If the server lacks the Cairo library,
+PNG requests are answered with SVG.
+
+## GET /img/error
+
+An image with a short message explaining an error, for showing in place of a diagram.
+
+| Param    | Required | Default | Meaning |
+|----------|----------|---------|---------|
+| `code`   | no       | `error` | One of the codes below; anything else shows "Something went wrong" |
+| `fen`    | no       |         | The detected position. For position problems the board is drawn with the offending squares highlighted in red |
+| `uncertain` | no    |         | Comma-separated squares (e.g. `e8,d8`) to shade amber as hard to read. `image_url` from `POST /move` includes it |
+| `format` | no       | `png`   | `png` or `svg` |
+| `size`   | no       | `480`   | Image width, 160–1024 |
+
+```sh
+curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
+  --data-urlencode 'fen=8/8/8/8/8/8/8/K7 w - - 0 1'
+```
+
+| `code` | Title |
+|--------|-------|
+| `board_not_found` | No board found |
+| `invalid_image` | Image unreadable |
+| `recognition_unavailable` | Board unreadable |
+| `illegal_position` | Illegal position (with a FEN, the specific problem is named) |
+| `missing_king`, `too_many_kings`, `pawn_on_back_rank`, `too_many_pieces`, `opposite_check`, `impossible_check`, `bad_castling`, `bad_en_passant` | The specific position problem |
+| `game_over` | No legal moves (with a FEN: "Checkmate: … wins." or "Stalemate: …") |
+| `illegal_move` | Illegal move |
+| `invalid_fen` | Invalid FEN |
+| `engine_unavailable` | Engine error |
+| `invalid_request` | Bad request |
+| `too_large` | Image too large |
+
+The message text comes from a fixed table, and nothing from the request is drawn as
+text. It always returns status 200.
 
 ## GET /healthz
 

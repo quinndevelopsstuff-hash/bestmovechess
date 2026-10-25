@@ -48,7 +48,7 @@
     </fieldset>
 
     <details>
-      <summary>Castling, en passant, depth</summary>
+      <summary>Castling, en passant, image type, depth</summary>
       <p class="hint">A photo can't show these, so castling and en passant default to none.</p>
       <fieldset class="checks">
         <legend>Castling still allowed</legend>
@@ -65,6 +65,13 @@
             <option>e</option><option>f</option><option>g</option><option>h</option>
           </select>
         </label>
+        <label>Image type
+          <select id="source">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="screenshot">Screenshot</option>
+            <option value="camera">Camera photo</option>
+          </select>
+        </label>
         <label>Depth
           <select id="depth">
             <option value="10">10 (fast)</option>
@@ -76,6 +83,8 @@
       </div>
     </details>
 
+    <label class="check-line"><input type="checkbox" id="flip"> Board is shown from Black's side</label>
+    <label class="check-line"><input type="checkbox" id="show-diagram"> Show diagram</label>
     <button type="button" id="go-btn" class="primary wide" disabled>Read the board</button>
 
     <details id="fen-box">
@@ -89,6 +98,7 @@
   </section>
 
   <p id="status" class="status" role="status" aria-live="polite"></p>
+  <img id="error-img" class="diagram-img" alt="Diagram explaining the error" hidden>
 
   <section id="result" class="card" hidden>
     <div id="review-head" hidden>
@@ -118,6 +128,9 @@
       <button type="button" id="reset-btn" title="Undo all your changes" hidden>Reset</button>
     </div>
     <button type="button" id="move-btn" class="primary wide" hidden>Get best move</button>
+    <figure id="diagram" class="diagram" hidden>
+      <img id="diagram-img" class="diagram-img" alt="Diagram of the position with the best move">
+    </figure>
     <div class="fen-line">
       <code id="fen-out" class="fen"></code>
       <button type="button" id="copy-fen" class="link">Copy FEN</button>

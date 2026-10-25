@@ -50,6 +50,9 @@ class Recognition:
     repairs: list[dict]             # squares changed to make the position legal
     alternatives: dict[str, list]   # square -> [[piece, prob], ...] for less certain squares ("." = empty)
     corners: list[list[float]]      # board corners a8, h8, h1, a1 in image pixels
+    source: str = "camera"          # which pipeline produced it: "camera" or "screenshot"
+    flipped: bool = False           # screenshot path: board shown with Black at the bottom
+    orientation: str | None = None  # screenshot path: "chessfen" (its guess) or "requested" (the flip field)
 
 
 def square_name(r: int, c: int) -> str:

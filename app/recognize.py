@@ -11,6 +11,7 @@ os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(config.MAX_IMAGE_PIXELS)
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
+from .vision import board_finder, screenshot  # noqa: E402
 from .vision.recognizer import BoardNotFound, Recognition, Recognizer  # noqa: E402,F401
 
 # Larger photos are shrunk first: no accuracy gain beyond this, just slower on a Pi.
@@ -56,11 +57,32 @@ def decode(image: bytes) -> np.ndarray:
     return img
 
 
-def recognize(image: bytes) -> tuple[Recognition, tuple[int, int]]:
-    """Return the recognition and the (width, height) its corner coordinates refer to."""
-    recognizer = _get_recognizer()
+SOURCES = ("auto", "screenshot", "camera")
+
+
+def recognize(image: bytes, source: str = "auto", flip: bool | None = None) -> tuple[Recognition, tuple[int, int]]:
+    """Return the recognition and the (width, height) its corner coordinates refer to.
+
+    source "auto": a flat digital board (screenshot) is read by chessfen; anything else,
+    or a screenshot chessfen can't read, goes to the photo model. "screenshot" uses
+    chessfen only, "camera" the photo model only. flip forces a screenshot's orientation
+    (True = Black at the bottom); None lets chessfen guess. Camera photos have their own
+    orientation detection."""
+    if source == "camera":
+        _get_recognizer()   # fail fast if the model is missing
     img = decode(image)
     try:
-        return recognizer.recognize(img), (img.shape[1], img.shape[0])
+        size = (img.shape[1], img.shape[0])
+        if source != "camera":
+            grid = board_finder.locate_board(img)
+            if source == "screenshot" or board_finder.looks_like_screenshot(grid):
+                try:
+                    return screenshot.recognize(img, flip, grid), size
+                except screenshot.ScreenshotFailed as exc:
+                    if source == "screenshot":
+                        if not screenshot.available():
+                            raise RecognitionUnavailable(exc.reason) from None
+                        raise BoardNotFound(f"couldn't read a board in the screenshot ({exc.reason})") from None
+        return _get_recognizer().recognize(img), size
     finally:
         del img

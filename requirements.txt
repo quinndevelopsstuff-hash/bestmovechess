@@ -5,3 +5,5 @@ python-multipart>=0.0.13
 numpy>=1.26
 opencv-python-headless>=4.8
 onnxruntime>=1.17
+cairosvg>=2.7
+chessfen @ git+https://github.com/sunfmin/chessfen.git@e6f179d8a90966b8d9fa3c95e53f3fa45323c025 ; python_version >= "3.13"

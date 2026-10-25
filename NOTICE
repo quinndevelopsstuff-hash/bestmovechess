@@ -1,0 +1,49 @@
+bestmovechess
+Copyright (C) 2026 bestmovechess contributors
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License (the LICENSE file) for details.
+
+
+Third-party software and assets
+-------------------------------
+
+chessfen
+  https://github.com/sunfmin/chessfen, by sunfmin
+  License: GPL-3.0
+  Used for screenshot recognition. Not included in this repository: pip installs it
+  from a pinned commit (see requirements.txt).
+
+python-chess
+  https://github.com/niklasf/python-chess, by Niklas Fiekas
+  License: GPL-3.0-or-later
+  Used for board logic, FEN handling and the board diagrams. Installed by pip.
+
+ChessLens
+  https://github.com/zeljko1611/ChessLens, by zeljko1611
+  License: MIT (see app/vision/LICENSE)
+  Board detection and square-cropping code in app/vision/ (vendored with changes), and
+  the photo recognition model, which is downloaded at setup from a pinned commit.
+  The model was trained on chesscog renders (https://osf.io/xf3ka/, Wölflein and
+  Arandjelović, CC BY 4.0) and samryan18/chess-dataset photos (MIT).
+
+Noto Sans Symbols 2
+  https://github.com/notofonts/symbols, by the Noto Project Authors
+  License: SIL Open Font License 1.1 (see static/pieces-OFL.txt)
+  Chess piece outlines used by the web page (static/pieces.js).
+
+samryan18/chess-dataset
+  https://github.com/samryan18/chess-dataset
+  License: MIT (see tests/data/README.md)
+  One downscaled photo used by the tests (tests/data/board.jpg).
+
+Stockfish
+  https://stockfishchess.org/
+  License: GPL-3.0
+  Installed separately by the user and run as a separate program; not included.

@@ -105,7 +105,7 @@ details[open] > summary { margin-bottom: 8px; }
 #board .light { fill: var(--sq-light); }
 #board .dark { fill: var(--sq-dark); }
 #board .hl { fill: var(--hl); }
-#board .unsure { fill: none; stroke: #e5484d; stroke-width: 6; stroke-dasharray: 14 8; }
+#board .unsure { fill: rgba(245, 165, 36, 0.25); stroke: #f5a524; stroke-width: 6; stroke-dasharray: 14 8; }
 #board .coord { font: 600 20px system-ui, sans-serif; }
 #board { cursor: pointer; }
 .pc { paint-order: stroke; stroke-linejoin: round; pointer-events: none; }
@@ -138,4 +138,10 @@ h2 { font-size: 1.15rem; margin: 0 0 2px; }
 .pick.guess { outline: 3px dashed #e5484d; outline-offset: -3px; }
 .pick span { position: absolute; bottom: 2px; right: 4px; font-size: 0.7rem; font-weight: 700; color: #000; background: rgba(255, 255, 255, 0.8); border-radius: 4px; padding: 0 3px; }
 .empty-x { stroke: var(--text); stroke-width: 8; stroke-linecap: round; fill: none; }
+#calibrate-form input[type="file"] { flex: 1 1 100%; }
+#calibrate-form input[type="text"] { font-family: inherit; font-size: 1rem; }
+.check-line { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+.check-line input { width: 20px; height: 20px; }
+.diagram { margin: 12px 0 0; }
+.diagram-img { display: block; width: 100%; max-width: 480px; margin: 0 auto 16px; border-radius: 8px; border: 1px solid var(--border); }
 footer { text-align: center; font-size: 0.8rem; color: var(--muted); margin: 8px 0 24px; }
