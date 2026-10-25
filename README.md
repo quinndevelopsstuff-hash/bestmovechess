@@ -159,6 +159,7 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
+| `PROFILE_DIR`        | `./profiles`                | Where calibration profiles (tiny `.npz` piece-shape files) are saved |
 
 ## How recognition works
 
@@ -188,11 +189,33 @@ the piece placement is taken from chessfen. The FEN's side to move, castling rig
 whether Black is at the bottom from where each side's pieces stand; the `flip` field
 overrides it (response: `flipped`, and `orientation` is `chessfen` or `requested`).
 
-On a chess.com screenshot (1.e4 e5, dark theme) it read 56 of 64 squares, and all 8
-mistakes were among the squares it flagged as doubtful. chessfen's templates are the
-"cburnett" pieces (lichess's default), so other piece sets are read less reliably;
-always check the doubtful squares. It takes about 1–2 seconds per screenshot on a
-desktop CPU, and more on a Pi.
+On a chess.com screenshot (1.e4 e5, dark theme) stock chessfen read 56 of 64 squares,
+and all 8 mistakes were among the squares it flagged as doubtful. Its templates are the
+"cburnett" pieces (lichess's default), so other piece sets are read less reliably. That
+is what calibration fixes. It takes about 1–2 seconds per screenshot on a desktop CPU,
+and more on a Pi.
+
+**Calibration** (`app/vision/calibration.py`). Take one clean screenshot of the *starting
+position* (no moves, nothing being dragged) the same way you take the ones you analyse,
+then run `python -m app.calibrate start.png --name iphone-green` or use "Calibrate for your
+screenshots" on the web page. The app cuts the 12 piece shapes (one per colour and
+type) out of that screenshot and uses them instead of the cburnett ones. It checks its
+work: the same screenshot must read back as exactly the start position, or the profile
+isn't saved. Only the 12 tiny masks are written (to `PROFILE_DIR`, about 10 KB); the
+screenshot stays in memory. When several profiles exist (say one per phone or theme),
+each screenshot is tried against all of them plus the built-in shapes, sharing one read
+of the board, and the one that leaves the fewest doubtful squares wins. The response
+says which (`profile`). `profile=<name>` or `profile=builtin` on `POST /move` forces one.
+
+Measured on a 14-screenshot chess.com game (iPhone, one theme), calibrating from the
+start-position screenshot and testing on the other 13: all 13 boards exactly right
+(832/832 squares, nothing flagged), also after the browser's resize to 1600 px and JPEG
+re-encoding. Stock chessfen got 0/13 exact boards (767/832 squares) on the same
+screenshots, flagging every wrong square. That is one device and one theme, so check
+other themes yourself with `python -m app.evaluate` (below). Not yet tested: a king in
+check (red glow), castling, promotions, dark board themes. A mistake is still flagged
+as doubtful rather than hidden whenever chessfen notices it, but calibration can't turn
+a wrong-but-confident reading into a flagged one, so spot-check now and then.
 
 **Photos** (`app/vision/recognizer.py`). This is the pretrained model:
 
@@ -224,8 +247,11 @@ and avoid strong reflections.
 
 `python -m app.evaluate` runs the recognizer over local fixtures and prints per-square
 accuracy, accuracy by piece type, a confusion table, and how many wrong squares were
-flagged as uncertain. Add `--source screenshot` or `--source camera` to test one
-recognizer. A fixture is an image in
+flagged as uncertain, plus a count of silent errors (wrong and not flagged). Add
+`--source screenshot` or `--source camera` to test one recognizer, and `--profile NAME`
+(or `builtin`) to test one calibration profile; by default it picks the best saved profile
+like the API does. To measure honestly, calibrate on one start-position screenshot and
+keep it out of the fixtures. A fixture is an image in
 `tests/fixtures/` plus a `.fen` sidecar with the expected piece placement; see
 `tests/fixtures/README.md`. Fixtures are gitignored and never committed, since
 screenshots can contain third-party artwork.
@@ -282,7 +308,8 @@ memory, and nothing in the recognition pipeline writes files. Image bytes are ne
 logged. The tests fail if an upload ever touches a temporary file.
 
 Screenshots are handed to chessfen as in-memory arrays. It doesn't read or write files
-while recognizing, and the tests fail if it ever does.
+while recognizing, and the tests fail if it ever does. Calibration reads its screenshot
+the same way; the only thing written is the profile (12 tiny shape masks, no photo).
 
 Output images are drawn from the position on request and are never stored. Diagrams
 from `/img` and `/img/error` are generated in memory from the FEN alone. They never

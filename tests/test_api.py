@@ -76,7 +76,7 @@ def fake_recognizer(monkeypatch):
     def use(placement, confidence=0.9):
         rec = Recognition(placement=placement, confidence=confidence, squares={}, uncertain=[],
                           repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-        monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None: (rec, (8, 8)))
+        monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None, profile=None: (rec, (8, 8)))
     return use
 
 
@@ -221,7 +221,7 @@ def test_post_game_over_returns_detection(client, fake_recognizer):
 def test_post_source_field(client, monkeypatch):
     seen = {}
 
-    def fake(image, source="auto", flip=None):
+    def fake(image, source="auto", flip=None, profile=None):
         seen["source"] = source
         from app.recognize import BoardNotFound
         raise BoardNotFound("nope")
@@ -246,7 +246,7 @@ def test_post_screenshot_without_chessfen(client, monkeypatch, no_disk):
 def test_post_flip_field(client, monkeypatch):
     seen = {}
 
-    def fake(image, source="auto", flip=None):
+    def fake(image, source="auto", flip=None, profile=None):
         seen["flip"] = flip
         from app.recognize import BoardNotFound
         raise BoardNotFound("nope")

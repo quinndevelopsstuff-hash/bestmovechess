@@ -15,6 +15,8 @@ import chess
 import cv2
 import numpy as np
 
+from .. import config
+from . import calibration
 from .board_finder import Grid
 from .recognizer import Recognition
 
@@ -51,7 +53,11 @@ def square_confidence(verdict) -> float:
     return round(float(min(1.0, 0.6 * min(parts))), 3)
 
 
-def _to_recognition(r, offset: tuple[int, int], flip: bool | None) -> Recognition:
+class UnknownProfile(ValueError):
+    """The requested calibration profile doesn't exist."""
+
+
+def _to_recognition(r, offset: tuple[int, int], flip: bool | None, profile: str = calibration.BUILTIN) -> Recognition:
     """Our Recognition from a chessfen one. `offset` is where the array chessfen saw sits
     in the full image, so corners come out in full-image pixels."""
     board = chess.BaseBoard.empty()
@@ -77,25 +83,61 @@ def _to_recognition(r, offset: tuple[int, int], flip: bool | None) -> Recognitio
         source="screenshot",
         flipped=flipped,
         orientation="requested" if flip is not None else "chessfen",
+        profile=profile,
     )
 
 
-def recognize(img: np.ndarray, flip: bool | None = None, grid: Grid | None = None) -> Recognition:
+def _candidates(profile: str | None) -> list[calibration.Profile | None]:
+    """Profiles to try: the named one, or (auto) every saved one plus stock chessfen."""
+    if profile == calibration.BUILTIN:
+        return [None]
+    if profile:
+        try:
+            return [calibration.load(profile, config.PROFILE_DIR)]
+        except KeyError:
+            raise UnknownProfile(f"no calibration profile named {profile!r}") from None
+        except ValueError as exc:
+            raise UnknownProfile(str(exc)) from None
+    return [*calibration.load_all(config.PROFILE_DIR), None]
+
+
+def _score(rec: Recognition) -> tuple[int, float]:
+    """Lower is better: fewest doubtful squares, then highest total confidence."""
+    return len(rec.uncertain), -sum(rec.squares.values())
+
+
+def recognize(img: np.ndarray, flip: bool | None = None, grid: Grid | None = None,
+              profile: str | None = None) -> Recognition:
     """Read a screenshot (BGR array). flip: True = Black at the bottom, False = White,
     None = let chessfen guess. If `grid` (the board found by its checker pattern) is
     given, chessfen reads a crop around it first, which is faster and keeps phone UI
     out of the way; the whole image is the fallback. Doubtful squares are reported in
-    `uncertain`, never hidden. Raises ScreenshotFailed."""
+    `uncertain`, never hidden.
+
+    profile: a saved calibration profile's name, "builtin" for stock chessfen, or None to
+    try every saved profile and keep the one that leaves the fewest doubtful squares
+    (the winner is reported in `Recognition.profile`). Raises ScreenshotFailed, or
+    UnknownProfile for a name that doesn't exist."""
     if chessfen is None:
         raise ScreenshotFailed("screenshot recognition needs chessfen, which needs Python 3.13+")
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     orientation = (chessfen.Orientation.AUTO if flip is None
                    else chessfen.Orientation.BLACK if flip else chessfen.Orientation.WHITE)
 
+    candidates = _candidates(profile)
+
     def attempt(arr: np.ndarray, offset: tuple[int, int]) -> Recognition:
+        arr = np.ascontiguousarray(arr)
+        best = None
         # Castling.NONE: we fill castling in ourselves from the user's choices.
-        result = chessfen.recognize(np.ascontiguousarray(arr), orientation=orientation, castling=chessfen.Castling.NONE)
-        return _to_recognition(result, offset, flip)
+        with calibration.shared_reading():   # read the board once, whatever the number of profiles
+            for candidate in candidates:
+                with calibration.using(candidate):
+                    result = chessfen.recognize(arr, orientation=orientation, castling=chessfen.Castling.NONE)
+                rec = _to_recognition(result, offset, flip, candidate.name if candidate else calibration.BUILTIN)
+                if best is None or _score(rec) < _score(best):
+                    best = rec
+        return best
 
     reasons = []
     if grid is not None:

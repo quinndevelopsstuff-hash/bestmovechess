@@ -95,6 +95,17 @@
         <button type="submit">Analyse</button>
       </form>
     </details>
+
+    <details id="calibrate-box">
+      <summary>Calibrate for your screenshots (more accurate)</summary>
+      <p class="hint">Take one screenshot of the <strong>starting position</strong> (no moves yet) the same way you take the ones you analyse. The app learns your piece style from it and reads later screenshots much more accurately. Only 12 tiny piece shapes are saved, never the screenshot.</p>
+      <div class="row">
+        <input type="text" id="cal-name" placeholder="name, e.g. iphone-green" maxlength="40" spellcheck="false" autocomplete="off">
+        <button type="button" id="cal-btn">Choose start screenshot</button>
+        <input type="file" id="cal-file" accept="image/*" hidden>
+      </div>
+      <ul id="cal-list" class="cal-list"></ul>
+    </details>
   </section>
 
   <p id="status" class="status" role="status" aria-live="polite"></p>

@@ -53,6 +53,7 @@ class Recognition:
     source: str = "camera"          # which pipeline produced it: "camera" or "screenshot"
     flipped: bool = False           # screenshot path: board shown with Black at the bottom
     orientation: str | None = None  # screenshot path: "chessfen" (its guess) or "requested" (the flip field)
+    profile: str | None = None      # screenshot path: calibration profile used ("builtin" = stock chessfen)
 
 
 def square_name(r: int, c: int) -> str:
