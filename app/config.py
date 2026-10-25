@@ -40,3 +40,8 @@ MAX_UPLOAD_BYTES = _int("MAX_UPLOAD_MB", 10) * 1024 * 1024
 # links are built from the request's X-Forwarded-Proto/X-Forwarded-Host (or Host) headers.
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+# Where piece-shape calibration profiles (tiny .npz files, never screenshots) are kept.
+PROFILE_DIR = os.environ.get(
+    "PROFILE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles"),
+)

@@ -90,19 +90,19 @@ def by_piece_type(pairs: Counter) -> str:
     return "\n".join(lines)
 
 
-def recognizer(source: str):
+def recognizer(source: str, profile: str | None = None):
     """The recognition pipeline exactly as POST /move runs it with this `source`.
     Returns (placement or None if no board, pipeline actually used)."""
-    from .recognize import BoardNotFound, RecognitionUnavailable, recognize
+    from .recognize import BoardNotFound, RecognitionUnavailable, UnknownProfile, recognize
 
     def run(data: bytes) -> tuple[str | None, str, list[str]]:
         try:
-            rec, _ = recognize(data, source)
+            rec, _ = recognize(data, source, None, profile)
         except BoardNotFound:
             return None, source, []
-        except RecognitionUnavailable as exc:
+        except (RecognitionUnavailable, UnknownProfile) as exc:
             sys.exit(f"error: {exc}")
-        return rec.placement, rec.source, rec.uncertain
+        return rec.placement, f"{rec.source}/{rec.profile}" if rec.profile else rec.source, rec.uncertain
     return run
 
 
@@ -113,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("folder", nargs="?", type=Path, default=DEFAULT_DIR)
     ap.add_argument("--source", choices=SOURCES, default="auto", help="which pipeline to run (as the API's source field)")
+    ap.add_argument("--profile", help="calibration profile for screenshots (a saved name, or builtin); "
+                                      "default: best saved profile, as the API does")
     ap.add_argument("-v", "--verbose", action="store_true", help="list every misread square")
     args = ap.parse_args(argv)
 
@@ -124,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no fixtures in {args.folder} (need <name>.png/.jpg plus <name>.fen)", file=sys.stderr)
         return 1
 
-    run = recognizer(args.source)
+    run = recognizer(args.source, args.profile)
     pairs: Counter = Counter()
     flagged: Counter = Counter()
     right_total = boards_right = 0
@@ -154,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
           f"   boards fully correct: {boards_right}/{n}")
     print(f"uncertain flags: {flagged['wrong_flagged']}/{flagged['wrong']} wrong squares flagged, "
           f"{flagged['right_flagged']} correct squares flagged")
+    print(f"silent errors (wrong and not flagged): {flagged['wrong'] - flagged['wrong_flagged']}")
     print("\naccuracy by piece type:\n" + by_piece_type(pairs))
     print("\nconfusion (rows = expected, columns = predicted):\n" + confusion_table(pairs))
     return 0

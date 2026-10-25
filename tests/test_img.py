@@ -123,7 +123,7 @@ def fake_recognizer(monkeypatch):
     def use(placement):
         rec = Recognition(placement=placement, confidence=0.9, squares={}, uncertain=[], repairs=[],
                           alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-        monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None: (rec, (8, 8)))
+        monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None, profile=None: (rec, (8, 8)))
     return use
 
 
@@ -172,7 +172,7 @@ def test_img_out_on_error(client, fake_recognizer):
 def test_img_out_on_error_without_board(client, monkeypatch):
     from app.recognize import BoardNotFound
 
-    def no_board(image, source="auto", flip=None):
+    def no_board(image, source="auto", flip=None, profile=None):
         raise BoardNotFound("couldn't find a chessboard in the photo")
     monkeypatch.setattr("app.main.recognize", no_board)
     body = post(client, {"turn": "w", "img_out": "true"}).json()
@@ -197,7 +197,7 @@ def test_img_out_error_url_carries_uncertain(client, monkeypatch):
     from app.recognize import Recognition
     rec = Recognition(placement="8/8/8/8/8/8/8/K7", confidence=0.2, squares={}, uncertain=["e8", "d8"],
                       repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-    monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None: (rec, (8, 8)))
+    monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None, profile=None: (rec, (8, 8)))
     body = post(client, {"turn": "w", "img_out": "true"}).json()
     q = parse_qs(urlparse(body["image_url"]).query)
     assert q["code"] == ["missing_king"] and q["uncertain"] == ["e8,d8"]

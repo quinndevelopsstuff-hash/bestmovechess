@@ -145,3 +145,5 @@ h2 { font-size: 1.15rem; margin: 0 0 2px; }
 .diagram { margin: 12px 0 0; }
 .diagram-img { display: block; width: 100%; max-width: 480px; margin: 0 auto 16px; border-radius: 8px; border: 1px solid var(--border); }
 footer { text-align: center; font-size: 0.8rem; color: var(--muted); margin: 8px 0 24px; }
+
+.cal-list { list-style: none; padding: 0; margin: 8px 0 0; font-size: 0.9rem; color: var(--muted); }

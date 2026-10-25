@@ -104,6 +104,7 @@ Send `multipart/form-data`:
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
 | `flip`     | no       | Screenshots: `auto` (default) lets chessfen guess whether Black is at the bottom; `true`/`false` forces it |
 | `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
+| `profile`  | no       | Screenshots: a saved calibration profile's name, or `builtin` for stock chessfen. Default: the best saved profile is picked automatically (see `/profiles`) |
 
 Castling and en passant default to none because they can't be seen in a photo.
 
@@ -141,6 +142,7 @@ It returns every field of `GET /move`, plus:
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
 | `flipped`      | bool   | Screenshots: the board was read with Black at the bottom (`corners` then start at the bottom-right) |
 | `orientation`  | string / null | Screenshots: `chessfen` (chessfen guessed from where each side's pieces stand) or `requested` (the `flip` field); `null` for photos |
+| `profile`      | string / null | Screenshots: the calibration profile used (`builtin` = stock chessfen shapes); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
 taken from the side or from Black's end, the detected position may be rotated.
@@ -229,6 +231,22 @@ that doesn't send them, or serve the app under a sub-path.
 
 Uploaded images are processed in memory and never stored or logged. Diagrams are drawn
 from the position on request, never stored, and never use your photo. See the README.
+
+## /profiles: calibration for screenshots
+
+A profile holds 12 piece shapes cut from a screenshot of your own start position, which
+makes screenshots from that app/theme/device far more accurate (see the README). Profiles
+are tiny files in `PROFILE_DIR`; the screenshot you send is processed in memory only.
+There is no login, so as with the rest of the app, keep it on your private network.
+
+| Request | Does |
+|---------|------|
+| `GET /profiles` | `{"profiles": ["iphone-green"], "available": true}` |
+| `POST /profiles` | Multipart: `name` (1-40 chars: lowercase letters, digits, `-`, `_`; not `builtin`) and `image` (a clean screenshot of the start position, White at the bottom or top). Returns `{"name", "profiles"}`. Reusing a name replaces that profile; at most 12 profiles |
+| `DELETE /profiles/{name}` | Deletes one. `404 unknown_profile` if it doesn't exist |
+
+Errors: `422 calibration_failed` (not a clean start position, or no board found),
+`409 too_many_profiles`, `415 invalid_image`, `501 recognition_unavailable` (needs Python 3.13+).
 
 ## GET /img
 
@@ -328,6 +346,9 @@ It reports that the web server is up. It doesn't check Stockfish or the model.
 | 422    | `illegal_position`        | Valid FEN syntax but impossible position; `detail` says why (e.g. `Black has no king`) |
 | 422    | `game_over`               | Checkmate or stalemate: no move to suggest |
 | 422    | `board_not_found`         | No chessboard found in the photo |
+| 422    | `unknown_profile`         | `profile` names a calibration profile that doesn't exist |
+| 422    | `calibration_failed`      | `POST /profiles`: the screenshot isn't a clean start position |
+| 409    | `too_many_profiles`       | `POST /profiles`: the limit of 12 is reached |
 | 501    | `recognition_unavailable` | Model file missing (`python scripts/download_model.py`) |
 | 503    | `engine_unavailable`      | Stockfish missing or crashed (it restarts automatically on the next request) |
 

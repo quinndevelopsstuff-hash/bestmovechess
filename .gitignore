@@ -9,3 +9,6 @@ models/*.onnx
 # Local recognition fixtures (screenshots/photos + .fen sidecars). Never committed.
 tests/fixtures/*
 !tests/fixtures/README.md
+
+# Calibration profiles (piece shapes cut from your own screenshots)
+profiles/

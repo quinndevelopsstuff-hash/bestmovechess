@@ -60,14 +60,34 @@ def decode(image: bytes) -> np.ndarray:
 SOURCES = ("auto", "screenshot", "camera")
 
 
-def recognize(image: bytes, source: str = "auto", flip: bool | None = None) -> tuple[Recognition, tuple[int, int]]:
+class UnknownProfile(ValueError):
+    pass
+
+
+def calibrate(image: bytes, name: str):
+    """Make and save a piece profile from a start-position screenshot (in memory only)."""
+    from .vision import calibration
+    if not calibration.available():
+        raise RecognitionUnavailable("calibration needs chessfen, which needs Python 3.13+")
+    img = decode(image)
+    try:
+        profile = calibration.calibrate(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), name)
+        calibration.save(profile, config.PROFILE_DIR)
+        return profile
+    finally:
+        del img
+
+
+def recognize(image: bytes, source: str = "auto", flip: bool | None = None,
+              profile: str | None = None) -> tuple[Recognition, tuple[int, int]]:
     """Return the recognition and the (width, height) its corner coordinates refer to.
 
     source "auto": a flat digital board (screenshot) is read by chessfen; anything else,
     or a screenshot chessfen can't read, goes to the photo model. "screenshot" uses
     chessfen only, "camera" the photo model only. flip forces a screenshot's orientation
     (True = Black at the bottom); None lets chessfen guess. Camera photos have their own
-    orientation detection."""
+    orientation detection. profile: calibration profile for screenshots (a saved name,
+    "builtin" for stock chessfen, None = pick the best saved one automatically)."""
     if source == "camera":
         _get_recognizer()   # fail fast if the model is missing
     img = decode(image)
@@ -77,7 +97,9 @@ def recognize(image: bytes, source: str = "auto", flip: bool | None = None) -> t
             grid = board_finder.locate_board(img)
             if source == "screenshot" or board_finder.looks_like_screenshot(grid):
                 try:
-                    return screenshot.recognize(img, flip, grid), size
+                    return screenshot.recognize(img, flip, grid, profile), size
+                except screenshot.UnknownProfile as exc:
+                    raise UnknownProfile(str(exc)) from None
                 except screenshot.ScreenshotFailed as exc:
                     if source == "screenshot":
                         if not screenshot.available():

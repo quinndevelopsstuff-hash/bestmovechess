@@ -352,6 +352,13 @@ function orientationNote(r) {
     : " If the board was shown from Black's side, tick that option and read it again.";
 }
 
+function profileNote(r) {
+  if (r.source !== "screenshot" || r.profile !== "builtin") return "";
+  return (r.uncertain || []).length
+    ? " Tip: calibrating with a start-position screenshot (under the photo options) makes screenshots far more accurate."
+    : "";
+}
+
 function showConfidence(r) {
   const pct = Math.round(r.confidence * 100);
   const low = r.confidence < LOW_CONFIDENCE;
@@ -359,7 +366,7 @@ function showConfidence(r) {
   els.confidence.textContent = `Recognition confidence: ${pct}%. ` +
     (low ? "Likely mistakes: compare the board with your photo carefully." : "Check it matches your photo.") +
     (unsure ? ` Dashed squares (${unsure}) are the least certain.` : "") +
-    orientationNote(r);
+    orientationNote(r) + profileNote(r);
   els.confidence.classList.toggle("low", low);
   els.confidence.hidden = false;
 }
@@ -651,3 +658,67 @@ els.copyFen.addEventListener("click", async () => {
     setStatus("Couldn't copy. Select the FEN text instead.", true);
   }
 });
+
+// ---------- calibration profiles ----------
+
+const cal = { name: $("cal-name"), btn: $("cal-btn"), file: $("cal-file"), list: $("cal-list") };
+
+async function loadProfiles() {
+  try {
+    const { profiles } = await request("profiles");
+    renderProfiles(profiles);
+  } catch { /* the page works without it */ }
+}
+
+function renderProfiles(profiles) {
+  cal.list.replaceChildren();
+  for (const name of profiles) {
+    const li = document.createElement("li");
+    li.append(name + " ");
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "link";
+    del.textContent = "Delete";
+    del.addEventListener("click", async () => {
+      try {
+        renderProfiles((await request(`profiles/${encodeURIComponent(name)}`, { method: "DELETE" })).profiles);
+        setStatus(`Deleted ${name}.`);
+      } catch (err) {
+        setStatus(err.detail || "Couldn't delete it.", true);
+      }
+    });
+    li.append(del);
+    cal.list.append(li);
+  }
+  if (!profiles.length) cal.list.textContent = "No profiles yet. Screenshots use the built-in shapes.";
+}
+
+cal.btn.addEventListener("click", () => {
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(cal.name.value.trim().toLowerCase())) {
+    setStatus("Give the profile a short name first (letters, digits, - or _).", true);
+    cal.name.focus();
+    return;
+  }
+  cal.file.click();
+});
+
+cal.file.addEventListener("change", async () => {
+  const file = cal.file.files[0];
+  cal.file.value = "";
+  if (!file) return;
+  setStatus("Learning your pieces…");
+  try {
+    // Same downscale path as every other upload, so the shapes match what gets analysed.
+    const blob = await toUploadBlob(file);
+    const form = new FormData();
+    form.append("name", cal.name.value.trim().toLowerCase());
+    form.append("image", blob, "start.jpg");
+    const { name, profiles } = await request("profiles", { method: "POST", body: form });
+    renderProfiles(profiles);
+    setStatus(`Saved "${name}". Screenshots are now read with it automatically.`);
+  } catch (err) {
+    setStatus(err.detail || "Calibration failed.", true);
+  }
+});
+
+loadProfiles();

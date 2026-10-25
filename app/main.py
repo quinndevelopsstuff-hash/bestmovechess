@@ -18,7 +18,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config, render
 from .engine import Engine, EngineUnavailable
-from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
+from . import recognize as recognition
+from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, UnknownProfile, recognize
+from .vision import calibration
 from .upload import UploadError, read_form
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -212,6 +214,8 @@ _POST_MOVE_FORM = {
                            "description": "auto: chessfen first, photo model as fallback; screenshot: chessfen only; camera: photo model only"},
                 "flip": {"type": "string", "enum": ["auto", "true", "false"], "default": "auto",
                          "description": "Screenshots: true if Black is at the bottom; auto lets chessfen guess"},
+                "profile": {"type": "string",
+                            "description": "Screenshots: calibration profile name, or builtin for stock chessfen. Default: best saved profile is picked automatically"},
                 "img_out": {"type": "boolean", "default": False,
                             "description": "Also return image_url, a rendered diagram of the result"},
             },
@@ -267,6 +271,9 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         flip = flip_field in ("true", "1", "yes", "on")
     else:
         raise APIError(422, "invalid_request", "flip: must be auto, true or false")
+    profile = fields.get("profile", "").strip().lower() or None
+    if profile and profile != calibration.BUILTIN and not calibration.valid_name(profile):
+        raise APIError(422, "invalid_request", "profile: not a valid profile name")
     try:
         depth = int(fields.get("depth") or config.DEFAULT_DEPTH)
     except ValueError:
@@ -275,11 +282,13 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
 
     try:
-        rec, (width, height) = await run_in_threadpool(recognize, image, source, flip)
+        rec, (width, height) = await run_in_threadpool(recognize, image, source, flip, profile)
     except RecognitionUnavailable as exc:
         raise APIError(501, "recognition_unavailable", str(exc)) from None
     except InvalidImage as exc:
         raise APIError(415, "invalid_image", str(exc)) from None
+    except UnknownProfile as exc:
+        raise APIError(422, "unknown_profile", str(exc)) from None
     except BoardNotFound as exc:
         raise APIError(422, "board_not_found", f"{exc}; fill the frame with the board and avoid glare") from None
 
@@ -303,8 +312,66 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "source": rec.source,
         "flipped": rec.flipped,
         "orientation": rec.orientation,
+        "profile": rec.profile,
     }
     return await best_move(request, check_position(board, {**extra, "fen": fen}), depth, extra)
+
+
+# --- calibration profiles ---
+
+MAX_PROFILES = 12
+
+
+@app.get("/profiles")
+async def list_profiles():
+    """Saved piece-shape profiles. "builtin" (stock chessfen) is always available."""
+    return {"profiles": calibration.names(config.PROFILE_DIR), "builtin": BUILTIN_NOTE,
+            "available": calibration.available()}
+
+
+BUILTIN_NOTE = "stock chessfen shapes; used automatically when no saved profile fits better"
+
+
+@app.post("/profiles")
+async def create_profile(request: Request):
+    """Multipart form: name (e.g. "iphone-green") and image (a clean screenshot of the start
+    position). Cuts the 12 piece shapes out of it and saves just those; the screenshot
+    itself is processed in memory and never stored. Re-using a name replaces that profile."""
+    fields, files = await read_form(request, config.MAX_UPLOAD_BYTES)
+    image = files.pop("image", None)
+    files.clear()
+    name = fields.get("name", "").strip().lower()
+    if not calibration.valid_name(name):
+        raise APIError(422, "invalid_request",
+                       "name: 1-40 characters, lowercase letters, digits, - or _ (and not 'builtin')")
+    if not image:
+        raise APIError(422, "invalid_request", "image: field required")
+    existing = calibration.names(config.PROFILE_DIR)
+    if name not in existing and len(existing) >= MAX_PROFILES:
+        raise APIError(409, "too_many_profiles", f"at most {MAX_PROFILES} profiles; delete one first")
+    try:
+        await run_in_threadpool(recognition.calibrate, image, name)
+    except RecognitionUnavailable as exc:
+        raise APIError(501, "recognition_unavailable", str(exc)) from None
+    except InvalidImage as exc:
+        raise APIError(415, "invalid_image", str(exc)) from None
+    except calibration.CalibrationError as exc:
+        raise APIError(422, "calibration_failed", str(exc)) from None
+    except OSError as exc:
+        log.error("couldn't save profile: %s", exc)
+        raise APIError(500, "profile_not_saved", "couldn't write the profile; check PROFILE_DIR is writable") from None
+    finally:
+        del image
+    return {"name": name, "profiles": calibration.names(config.PROFILE_DIR)}
+
+
+@app.delete("/profiles/{name}")
+async def delete_profile(name: str):
+    if not calibration.valid_name(name):
+        raise APIError(422, "invalid_request", "profile: not a valid profile name")
+    if not calibration.delete(name, config.PROFILE_DIR):
+        raise APIError(404, "unknown_profile", f"no calibration profile named {name!r}")
+    return {"deleted": name, "profiles": calibration.names(config.PROFILE_DIR)}
 
 
 # --- diagrams ---
