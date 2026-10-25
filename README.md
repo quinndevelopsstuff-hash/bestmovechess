@@ -25,9 +25,10 @@ Open `http://127.0.0.1:8000/` (or your Tailscale URL).
 3. Tap **Get best move**. If you didn't change anything, the answer appears straight
    away (it was computed with the photo). The move is drawn as an arrow.
 
-Under "Castling, en passant, depth" you can set what a photo can't show: castling
-and en passant default to none, and castling options that the position rules out
-are disabled. With no photo, enter a FEN or tap **Set up a position by hand** and
+Under "Castling, en passant, image type, depth" you can set what a photo can't show:
+castling and en passant default to none, and castling options that the position rules
+out are disabled. **Image type** is normally auto-detected; set it to Screenshot or
+Camera photo to force one recognizer. With no photo, enter a FEN or tap **Set up a position by hand** and
 edit the board directly.
 
 Tick **Show diagram** to also show a server-drawn picture of the position and best
@@ -147,11 +148,25 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `VISION_THREADS`     | `2`                         | ONNX Runtime threads                     |
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
+| `PROFILES_DIR`       | `profiles/`                 | Piece-template profiles for screenshot recognition |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
 
 ## How recognition works
 
-`app/vision/` runs on the uploaded bytes in memory:
+There are two recognizers. With the default `source=auto`, the app picks one per upload.
+
+**Screenshots** (`app/vision/screenshot.py`, no ML). It searches the image for an
+axis-aligned 8×8 grid whose same-coloured squares are practically identical, then snaps
+it to the grid lines, so a board surrounded by app UI (avatars, buttons, dark mode) is
+found at any resolution. For each square it takes the background colour from the
+square's border, so highlighted last-move squares work. It marks pixels that differ,
+drops small blobs such as coordinate labels, and fills holes to get the piece
+silhouette. The silhouette is matched against piece templates scaled to the same size,
+and the piece's colour is decided relative to the other pieces on the board. Templates
+come from a built-in profile rendered from python-chess's pieces, plus any profiles in
+`PROFILES_DIR`.
+
+**Photos** (`app/vision/recognizer.py`). This is the pretrained model:
 
 1. **Board detection.** It finds the "X-corners" where four squares meet and fits
    them to an 8×8 grid with RANSAC. That gives a perspective homography, so photos

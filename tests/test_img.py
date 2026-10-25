@@ -123,7 +123,7 @@ def fake_recognizer(monkeypatch):
     def use(placement):
         rec = Recognition(placement=placement, confidence=0.9, squares={}, uncertain=[], repairs=[],
                           alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-        monkeypatch.setattr("app.main.recognize", lambda image: (rec, (8, 8)))
+        monkeypatch.setattr("app.main.recognize", lambda image, source="auto": (rec, (8, 8)))
     return use
 
 
@@ -172,7 +172,7 @@ def test_img_out_on_error(client, fake_recognizer):
 def test_img_out_on_error_without_board(client, monkeypatch):
     from app.recognize import BoardNotFound
 
-    def no_board(image):
+    def no_board(image, source="auto"):
         raise BoardNotFound("couldn't find a chessboard in the photo")
     monkeypatch.setattr("app.main.recognize", no_board)
     body = post(client, {"turn": "w", "img_out": "true"}).json()

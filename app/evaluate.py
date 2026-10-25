@@ -90,28 +90,29 @@ def by_piece_type(pairs: Counter) -> str:
     return "\n".join(lines)
 
 
-def camera_recognizer():
-    """The existing photo pipeline, exactly as POST /move uses it."""
+def recognizer(source: str):
+    """The recognition pipeline exactly as POST /move runs it with this `source`.
+    Returns (placement or None if no board, pipeline actually used)."""
     from .recognize import BoardNotFound, RecognitionUnavailable, recognize
 
-    def run(data: bytes) -> str | None:
+    def run(data: bytes) -> tuple[str | None, str]:
         try:
-            rec, _ = recognize(data)
+            rec, _ = recognize(data, source)
         except BoardNotFound:
-            return None
+            return None, source
         except RecognitionUnavailable as exc:
             sys.exit(f"error: {exc}")
-        return rec.placement
+        return rec.placement, rec.source
     return run
 
 
-RECOGNIZERS = {"camera": camera_recognizer}
+SOURCES = ("auto", "screenshot", "camera")
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("folder", nargs="?", type=Path, default=DEFAULT_DIR)
-    ap.add_argument("--source", choices=sorted(RECOGNIZERS), default="camera", help="which recognizer to run")
+    ap.add_argument("--source", choices=SOURCES, default="auto", help="which pipeline to run (as the API's source field)")
     ap.add_argument("-v", "--verbose", action="store_true", help="list every misread square")
     args = ap.parse_args(argv)
 
@@ -123,12 +124,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no fixtures in {args.folder} (need <name>.png/.jpg plus <name>.fen)", file=sys.stderr)
         return 1
 
-    run = RECOGNIZERS[args.source]()
+    run = recognizer(args.source)
     pairs: Counter = Counter()
     right_total = boards_right = 0
     print(f"recognizer: {args.source}   fixtures: {len(fixtures)}\n")
     for name, path, expected in fixtures:
-        predicted = run(path.read_bytes())
+        predicted, used = run(path.read_bytes())
         result = compare(expected, predicted)
         right = sum(t == p for _, t, p in result)
         right_total += right
@@ -136,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         pairs.update((t, p) for _, t, p in result)
         pieces = [(t, p) for _, t, p in result if t != "."]
         piece_right = sum(t == p for t, p in pieces)
-        status = "board not found" if predicted is None else f"got {predicted}"
+        status = "board not found" if predicted is None else f"{used}: {predicted}"
         print(f"{name}: {right}/64 squares ({right / 64:.1%}), pieces {piece_right}/{len(pieces)}  [{status}]")
         if args.verbose:
             wrong = [f"{sq} {t}->{p}" for sq, t, p in result if t != p]

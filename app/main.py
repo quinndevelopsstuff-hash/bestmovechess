@@ -18,7 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config, render
 from .engine import Engine, EngineUnavailable
-from .recognize import BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
+from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
 from .upload import UploadError, read_form
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -182,6 +182,8 @@ _POST_MOVE_FORM = {
                 "castling": {"type": "string", "default": "-", "description": "Subset of KQkq, or -"},
                 "ep": {"type": "string", "description": "En passant file a-h, if any"},
                 "depth": {"type": "integer", "minimum": 1, "maximum": config.MAX_DEPTH},
+                "source": {"type": "string", "enum": list(SOURCES), "default": "auto",
+                           "description": "screenshot (flat digital board), camera (photo), or auto-detect"},
                 "img_out": {"type": "boolean", "default": False,
                             "description": "Also return image_url, a rendered diagram of the result"},
             },
@@ -228,6 +230,9 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
     if ep and (len(ep) != 1 or ep not in "abcdefgh"):
         raise APIError(422, "invalid_request", "ep: must be a file letter a-h")
     ep_square = f"{ep}{'6' if turn == 'w' else '3'}" if ep else "-"
+    source = fields.get("source", "").strip().lower() or "auto"
+    if source not in SOURCES:
+        raise APIError(422, "invalid_request", "source: must be auto, screenshot or camera")
     try:
         depth = int(fields.get("depth") or config.DEFAULT_DEPTH)
     except ValueError:
@@ -236,7 +241,7 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
 
     try:
-        rec, (width, height) = await run_in_threadpool(recognize, image)
+        rec, (width, height) = await run_in_threadpool(recognize, image, source)
     except RecognitionUnavailable as exc:
         raise APIError(501, "recognition_unavailable", str(exc)) from None
     except InvalidImage as exc:
@@ -254,6 +259,7 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "alternatives": rec.alternatives,
         "corners": rec.corners,
         "image_size": [width, height],
+        "source": rec.source,
     }
     return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
 

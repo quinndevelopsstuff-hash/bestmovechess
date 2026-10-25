@@ -76,7 +76,7 @@ def fake_recognizer(monkeypatch):
     def use(placement, confidence=0.9):
         rec = Recognition(placement=placement, confidence=confidence, squares={}, uncertain=[],
                           repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-        monkeypatch.setattr("app.main.recognize", lambda image: (rec, (8, 8)))
+        monkeypatch.setattr("app.main.recognize", lambda image, source="auto": (rec, (8, 8)))
     return use
 
 
@@ -101,7 +101,7 @@ def post(client, data=None, image=IMAGE):
 def test_post_without_model(client, no_disk, monkeypatch):
     monkeypatch.setattr("app.config.MODEL_PATH", "/nonexistent/model.onnx")
     monkeypatch.setattr("app.recognize._recognizer", None)
-    r = post(client)
+    r = post(client, {"turn": "w", "source": "camera"})
     assert r.status_code == 501
     assert r.json()["error"] == "recognition_unavailable"
 
@@ -216,3 +216,28 @@ def test_post_game_over_returns_detection(client, fake_recognizer):
     body = r.json()
     assert body["error"] == "game_over"
     assert body["detected"] and body["fen"].startswith("rnb1kbnr/")
+
+
+def test_post_source_field(client, monkeypatch):
+    seen = {}
+
+    def fake(image, source="auto"):
+        seen["source"] = source
+        from app.recognize import BoardNotFound
+        raise BoardNotFound("nope")
+    monkeypatch.setattr("app.main.recognize", fake)
+    assert post(client, {"turn": "w"}).status_code == 422 and seen["source"] == "auto"
+    post(client, {"turn": "w", "source": "Screenshot"})
+    assert seen["source"] == "screenshot"
+    r = post(client, {"turn": "w", "source": "scanner"})
+    assert r.status_code == 422 and "source" in r.json()["detail"]
+
+
+def test_post_screenshot_without_profiles(client, monkeypatch, no_disk):
+    import cv2
+    import numpy as np
+    monkeypatch.setattr("app.vision.profiles.all_profiles", lambda: [])
+    checker = np.kron((np.indices((8, 8)).sum(axis=0) % 2), np.ones((60, 60))).astype(np.uint8) * 120 + 100
+    img = cv2.imencode(".png", cv2.cvtColor(checker, cv2.COLOR_GRAY2BGR))[1].tobytes()
+    r = post(client, {"turn": "w", "source": "screenshot"}, image=img)
+    assert r.status_code == 501 and r.json()["error"] == "recognition_unavailable"

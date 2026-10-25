@@ -13,7 +13,7 @@ const els = {
   fileInput: $("file-input"), captureInput: $("capture-input"),
   camera: $("camera"), video: $("video"), snap: $("snap-btn"), cameraCancel: $("camera-cancel"),
   preview: $("preview"), previewImg: $("preview-img"), clearPhoto: $("clear-photo"), overlay: $("overlay"),
-  ep: $("ep"), depth: $("depth"), go: $("go-btn"),
+  ep: $("ep"), depth: $("depth"), source: $("source"), go: $("go-btn"),
   fenForm: $("fen-form"), fenInput: $("fen-input"), manual: $("manual-btn"),
   status: $("status"), result: $("result"),
   reviewHead: $("review-head"), reviewTitle: $("review-title"), answer: $("answer"),
@@ -240,6 +240,7 @@ async function readPhoto() {
   form.append("castling", castlingValue());
   form.append("ep", els.ep.value);
   form.append("depth", els.depth.value);
+  form.append("source", els.source.value);
   if (els.showDiagram.checked) form.append("img_out", "true");
   setBusy(true);
   setStatus("Reading the board…");

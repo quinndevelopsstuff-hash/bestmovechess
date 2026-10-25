@@ -48,7 +48,7 @@
     </fieldset>
 
     <details>
-      <summary>Castling, en passant, depth</summary>
+      <summary>Castling, en passant, image type, depth</summary>
       <p class="hint">A photo can't show these, so castling and en passant default to none.</p>
       <fieldset class="checks">
         <legend>Castling still allowed</legend>
@@ -63,6 +63,13 @@
             <option value="">none</option>
             <option>a</option><option>b</option><option>c</option><option>d</option>
             <option>e</option><option>f</option><option>g</option><option>h</option>
+          </select>
+        </label>
+        <label>Image type
+          <select id="source">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="screenshot">Screenshot</option>
+            <option value="camera">Camera photo</option>
           </select>
         </label>
         <label>Depth

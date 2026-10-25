@@ -85,6 +85,7 @@ Send `multipart/form-data`:
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
 | `depth`    | no       | As for `GET`                                                         |
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
+| `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
 
 Castling and en passant default to none because they can't be seen in a photo.
 
@@ -119,6 +120,7 @@ It returns every field of `GET /move`, plus:
 | `repairs`      | array  | Changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns` |
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
+| `source`       | string | Which recognizer ran: `screenshot` or `camera` |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
 taken from the side or from Black's end, the detected position may be rotated.
@@ -145,6 +147,26 @@ someone fix it:
  "fen": "1q1r4/r3b1k1/p1B1Q1p1/1pp5/2P2P2/2N3P1/PP3P2/R5K1 w KQ - 0 1",
  "detected": "1q1r4/r3b1k1/p1B1Q1p1/1pp5/2P2P2/2N3P1/PP3P2/R5K1", "confidence": 1.0, "...": "..."}
 ```
+
+### `source`: screenshots and photos
+
+There are two recognizers:
+
+- **`screenshot`**: for flat digital boards, such as a phone screenshot of a chess app or
+  a website. It finds the axis-aligned 8×8 board among the surrounding UI and matches
+  each piece's silhouette against piece templates. There's no ML involved.
+- **`camera`**: the pretrained model for photos of a physical board.
+
+With `auto` (the default), the screenshot recognizer runs when the image contains a clean
+axis-aligned board, where squares of one colour are practically identical. Otherwise the
+photo model runs. The response's `source` says which recognizer ran. In the screenshot
+recognizer, `squares` scores how well each square matched its template, `uncertain` lists
+squares below 0.6, and `alternatives` gives the next-best templates, e.g.
+`{"b8": [["r", 0.77], ["n", 0.76], ["p", 0.72]]}`.
+
+The screenshot recognizer works without setup for boards drawn with the standard
+"cburnett" pieces (lichess's default, also used by `/img`). Other piece sets, such as
+chess.com's, match less well until you calibrate a profile for them.
 
 ### `img_out`: a diagram of the result
 

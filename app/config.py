@@ -34,6 +34,11 @@ MODEL_PATH = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "square_cnn.onnx"),
 )
 VISION_THREADS = _int("VISION_THREADS", 2)
+# Piece-template profiles for screenshot recognition (written by calibration).
+PROFILES_DIR = os.environ.get(
+    "PROFILES_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles"),
+)
 MAX_IMAGE_PIXELS = _int("MAX_IMAGE_PIXELS", 50_000_000)
 MAX_UPLOAD_BYTES = _int("MAX_UPLOAD_MB", 10) * 1024 * 1024
 # Base for absolute links such as image_url, e.g. https://chess.example.ts.net. When unset,

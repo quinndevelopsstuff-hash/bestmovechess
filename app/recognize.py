@@ -11,6 +11,7 @@ os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(config.MAX_IMAGE_PIXELS)
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
+from .vision import profiles, screenshot  # noqa: E402
 from .vision.recognizer import BoardNotFound, Recognition, Recognizer  # noqa: E402,F401
 
 # Larger photos are shrunk first: no accuracy gain beyond this, just slower on a Pi.
@@ -56,11 +57,30 @@ def decode(image: bytes) -> np.ndarray:
     return img
 
 
-def recognize(image: bytes) -> tuple[Recognition, tuple[int, int]]:
-    """Return the recognition and the (width, height) its corner coordinates refer to."""
-    recognizer = _get_recognizer()
+SOURCES = ("auto", "screenshot", "camera")
+
+
+def recognize(image: bytes, source: str = "auto") -> tuple[Recognition, tuple[int, int]]:
+    """Return the recognition and the (width, height) its corner coordinates refer to.
+
+    source: "screenshot" uses the template matcher for flat digital boards, "camera" the
+    photo model, and "auto" picks the template matcher when the image contains a clean
+    axis-aligned board."""
+    if source == "camera":
+        _get_recognizer()   # fail fast if the model is missing
     img = decode(image)
     try:
-        return recognizer.recognize(img), (img.shape[1], img.shape[0])
+        size = (img.shape[1], img.shape[0])
+        if source != "camera":
+            grid = screenshot.locate_board(img)
+            if source == "screenshot" or screenshot.looks_like_screenshot(grid):
+                known = profiles.all_profiles()
+                if grid is None and source == "screenshot":
+                    raise BoardNotFound("couldn't find a flat 8x8 board in the screenshot")
+                if known and grid is not None:
+                    return screenshot.recognize(img, grid, known), size
+                if source == "screenshot":
+                    raise RecognitionUnavailable("no piece profiles available; calibrate one first")
+        return _get_recognizer().recognize(img), size
     finally:
         del img
