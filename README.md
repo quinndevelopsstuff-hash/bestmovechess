@@ -30,6 +30,10 @@ and en passant default to none, and castling options that the position rules out
 are disabled. With no photo, enter a FEN or tap **Set up a position by hand** and
 edit the board directly.
 
+Tick **Show diagram** to also show a server-drawn picture of the position and best
+move under the result (using `img_out`, see the API). The picture is redrawn for
+positions you've edited, and an explanatory image appears when something goes wrong.
+
 The live camera view needs HTTPS (or `localhost`); over plain HTTP the button opens
 the phone's camera app instead. Photos are shrunk to 1600 px and re-encoded as JPEG
 in the browser before upload, which also strips EXIF data such as location.
@@ -46,7 +50,25 @@ curl -G http://127.0.0.1:8000/move --data-urlencode 'fen=rnbqkbnr/pppppppp/8/8/4
 # Best move for a photo (plus the detected position and its confidence)
 curl -F image=@board.jpg -F turn=w http://127.0.0.1:8000/move
 # {"best":"c6d5","san":"Bd5",...,"detected":"1q1r4/r3b1k1/...","confidence":1.0,...}
+
+# Same, plus image_url: a diagram of the detected board with the best move drawn
+curl -F image=@board.jpg -F turn=w -F img_out=true https://<your-host>/move
+# {...,"image_url":"https://<your-host>/img?fen=...&best=c6d5&turn=w&eval=1.74"}
+
+# Draw any position yourself (PNG by default, or format=svg)
+curl -G https://<your-host>/img -o move.png \
+  --data-urlencode 'fen=r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3' -d best=f1b5 -d eval=0.45
+
+# An image explaining an error, with the offending squares marked when a FEN is given
+curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
+  --data-urlencode 'fen=8/8/8/8/8/8/8/K7 w - - 0 1'
 ```
+
+`img_out` (`true`/`false`, default `false`) adds `image_url` to the `POST /move`
+response. If the request fails, the JSON error gets an `image_url` pointing at
+`/img/error` instead. Links are absolute. They use `PUBLIC_BASE_URL` if it's set;
+otherwise they're built from the `X-Forwarded-Proto`/`X-Forwarded-Host` headers that
+`tailscale serve` sends, or from the `Host` header.
 
 Errors are JSON: `{"error": "invalid_fen", "detail": "..."}`. There is no
 authentication, so keep the app on localhost or a private network.
@@ -57,7 +79,7 @@ authentication, so keep the app on localhost or a private network.
 
 ```sh
 sudo apt update
-sudo apt install -y git python3-venv stockfish
+sudo apt install -y git python3-venv stockfish libcairo2 fonts-dejavu-core
 
 sudo git clone https://github.com/<you>/bestmovechess.git /opt/bestmovechess
 cd /opt/bestmovechess
@@ -84,8 +106,9 @@ keeping more cores busy.
 
 ### Any other machine (development)
 
-Install Stockfish (`brew install stockfish`, `apt install stockfish`, or download it
-and set `STOCKFISH_PATH`), then:
+Install Stockfish and the Cairo library used to draw PNG diagrams
+(`brew install stockfish cairo`, or `apt install stockfish libcairo2 fonts-dejavu-core`;
+you can also download Stockfish and set `STOCKFISH_PATH`), then:
 
 ```sh
 python3 -m venv .venv
@@ -123,6 +146,7 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `MODEL_PATH`         | `models/square_cnn.onnx`    | Recognition model file                   |
 | `VISION_THREADS`     | `2`                         | ONNX Runtime threads                     |
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
+| `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
 
 ## How recognition works
@@ -190,6 +214,11 @@ in memory rather than with the framework's default parser, which would write lar
 files to a temporary file on disk. The image is decoded with OpenCV straight from
 memory, and nothing in the recognition pipeline writes files. Image bytes are never
 logged. The tests fail if an upload ever touches a temporary file.
+
+Output images are drawn from the position on request and are never stored. Diagrams
+from `/img` and `/img/error` are generated in memory from the FEN alone. They never
+use, crop or draw on your photo, and the `/img` endpoints don't read or write files
+(apart from system fonts).
 
 Logs contain only the request method, path, status code, and timing. Query strings
 and request bodies are never logged (uvicorn's own access log is disabled with

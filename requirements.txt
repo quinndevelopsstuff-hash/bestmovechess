@@ -5,3 +5,4 @@ python-multipart>=0.0.13
 numpy>=1.26
 opencv-python-headless>=4.8
 onnxruntime>=1.17
+cairosvg>=2.7

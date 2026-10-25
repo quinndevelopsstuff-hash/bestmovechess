@@ -1,7 +1,7 @@
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends stockfish \
+ && apt-get install -y --no-install-recommends stockfish libcairo2 fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 ENV STOCKFISH_PATH=/usr/games/stockfish \

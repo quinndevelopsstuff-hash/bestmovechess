@@ -36,4 +36,7 @@ MODEL_PATH = os.environ.get(
 VISION_THREADS = _int("VISION_THREADS", 2)
 MAX_IMAGE_PIXELS = _int("MAX_IMAGE_PIXELS", 50_000_000)
 MAX_UPLOAD_BYTES = _int("MAX_UPLOAD_MB", 10) * 1024 * 1024
+# Base for absolute links such as image_url, e.g. https://chess.example.ts.net. When unset,
+# links are built from the request's X-Forwarded-Proto/X-Forwarded-Host (or Host) headers.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()

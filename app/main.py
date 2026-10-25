@@ -1,21 +1,22 @@
 """bestmovechess: one FastAPI app serving the web page and the move API."""
 
 import logging
+import math
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-
-import re
+from urllib.parse import urlencode
 
 import chess
 from fastapi import FastAPI, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config
+from . import config, render
 from .engine import Engine, EngineUnavailable
 from .recognize import BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
 from .upload import UploadError, read_form
@@ -181,6 +182,8 @@ _POST_MOVE_FORM = {
                 "castling": {"type": "string", "default": "-", "description": "Subset of KQkq, or -"},
                 "ep": {"type": "string", "description": "En passant file a-h, if any"},
                 "depth": {"type": "integer", "minimum": 1, "maximum": config.MAX_DEPTH},
+                "img_out": {"type": "boolean", "default": False,
+                            "description": "Also return image_url, a rendered diagram of the result"},
             },
         }}},
     }
@@ -194,6 +197,24 @@ async def post_move(request: Request):
     fields, files = await read_form(request, config.MAX_UPLOAD_BYTES)
     image = files.pop("image", None)
     files.clear()
+    img_out = fields.get("img_out", "").strip().lower()
+    if img_out not in ("", "true", "false", "1", "0", "yes", "no", "on", "off"):
+        raise APIError(422, "invalid_request", "img_out: must be true or false")
+    img_out = img_out in ("true", "1", "yes", "on")
+    try:
+        result = await analyse_photo(request, fields, image)
+    except APIError as exc:
+        if img_out:
+            exc.extra["image_url"] = error_image_url(request, exc)
+        raise
+    finally:
+        del image
+    if img_out:
+        result["image_url"] = board_image_url(request, result)
+    return result
+
+
+async def analyse_photo(request: Request, fields: dict[str, str], image: bytes | None) -> dict:
     if not image:
         raise APIError(422, "invalid_request", "image: field required")
 
@@ -222,8 +243,6 @@ async def post_move(request: Request):
         raise APIError(415, "invalid_image", str(exc)) from None
     except BoardNotFound as exc:
         raise APIError(422, "board_not_found", f"{exc}; fill the frame with the board and avoid glare") from None
-    finally:
-        del image
 
     fen = f"{rec.placement} {turn} {castling} {ep_square} 0 1"
     extra = {
@@ -237,6 +256,139 @@ async def post_move(request: Request):
         "image_size": [width, height],
     }
     return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
+
+
+# --- diagrams ---
+
+_HOST_RE = re.compile(r"^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:\d{1,5})?$")
+
+
+def public_base_url(request: Request) -> str:
+    """Absolute base URL for links: PUBLIC_BASE_URL, else what the proxy (e.g. tailscale serve) forwarded."""
+    if config.PUBLIC_BASE_URL:
+        return config.PUBLIC_BASE_URL.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if proto not in ("http", "https"):
+        proto = request.url.scheme
+    for host in (request.headers.get("x-forwarded-host", "").split(",")[0].strip(), request.headers.get("host", "")):
+        if _HOST_RE.match(host):
+            return f"{proto}://{host}"
+    return f"{proto}://{request.url.netloc}"
+
+
+def board_image_url(request: Request, result: dict) -> str:
+    params = {"fen": result["fen"], "best": result["best"], "turn": result["fen"].split()[1]}
+    if result.get("mate") is not None:
+        params["mate"] = result["mate"]
+    elif result.get("eval") is not None:
+        params["eval"] = result["eval"]
+    return f"{public_base_url(request)}/img?{urlencode(params)}"
+
+
+def error_image_url(request: Request, exc: APIError) -> str:
+    params = {"code": exc.error}
+    fen = exc.extra.get("fen")
+    if fen:
+        params["fen"] = fen
+        if exc.error == "illegal_position":
+            # Name the specific problem (e.g. missing_king) when we can tell what it is.
+            try:
+                found = render.diagnose(chess.Board(fen))
+            except ValueError:
+                found = None
+            if found:
+                params["code"] = found[0]
+    return f"{public_base_url(request)}/img/error?{urlencode(params)}"
+
+
+class ImageError(Exception):
+    def __init__(self, status: int, code: str, board: chess.Board | None = None, move: chess.Move | None = None):
+        self.status, self.code, self.board, self.move = status, code, board, move
+
+
+def _size(value: str) -> int:
+    if not value:
+        return render.DEFAULT_SIZE
+    if not value.isdigit() or not render.MIN_SIZE <= int(value) <= render.MAX_SIZE:
+        raise ImageError(422, "invalid_request")
+    return int(value)
+
+
+async def _image_response(svg: str, fmt: str, status: int = 200) -> Response:
+    headers = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
+    png = await run_in_threadpool(render.to_png, svg) if fmt == "png" else None
+    if png is not None:
+        return Response(png, status_code=status, media_type="image/png", headers=headers)
+    headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
+    return Response(svg, status_code=status, media_type="image/svg+xml", headers=headers)
+
+
+_MOVE_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+
+
+# Generous upper bounds; anything longer is rejected before parsing.
+_MAX_LEN = {"fen": 100, "best": 5, "turn": 1, "eval": 12, "mate": 4}
+
+
+@app.get("/img")
+async def board_image(fen: str = "", best: str = "", turn: str = "", format: str = "png",
+                      eval: str = "", mate: str = "", size: str = ""):
+    """Diagram of a position with the best move drawn. Bad input gets an error image."""
+    fmt = format if format in ("png", "svg") else "png"
+    px = render.DEFAULT_SIZE
+    try:
+        values = {"fen": fen, "best": best, "turn": turn, "eval": eval, "mate": mate}
+        if format not in ("png", "svg") or any(len(values[k]) > n for k, n in _MAX_LEN.items()):
+            raise ImageError(422, "invalid_request")
+        px = _size(size)
+        try:
+            board = chess.Board(fen.strip())
+        except ValueError:
+            raise ImageError(400, "invalid_fen") from None
+        if turn:
+            if turn not in ("w", "b"):
+                raise ImageError(422, "invalid_request")
+            board.turn = turn == "w"
+        found = render.diagnose(board)
+        if found and found[0] != "game_over":
+            raise ImageError(422, found[0], board)
+        move = None
+        if best and found:   # game over: there's no move to draw, so say why
+            raise ImageError(422, "game_over", board)
+        if best:
+            move = chess.Move.from_uci(best) if _MOVE_RE.match(best) else None
+            if move is None or move not in board.legal_moves:
+                raise ImageError(422, "illegal_move", board, move)
+        try:
+            eval_ = float(eval) if eval else None
+            mate_ = int(mate) if mate else None
+        except ValueError:
+            raise ImageError(422, "invalid_request") from None
+        if eval_ is not None and not (math.isfinite(eval_) and abs(eval_) <= 1000):
+            raise ImageError(422, "invalid_request")
+        if mate_ is not None and not 0 < abs(mate_) <= 999:
+            raise ImageError(422, "invalid_request")
+        svg = render.board_image(board, move, eval_, mate_, px)
+    except ImageError as err:
+        return await _image_response(render.error_image(err.code, err.board, px, err.move), fmt, err.status)
+    return await _image_response(svg, fmt)
+
+
+@app.get("/img/error")
+async def error_image(code: str = "error", fen: str = "", format: str = "png", size: str = ""):
+    """An image explaining an error code; draws the position too when it's a position problem."""
+    fmt = format if format in ("png", "svg") else "png"
+    try:
+        px = _size(size)
+    except ImageError:
+        px = render.DEFAULT_SIZE
+    board = None
+    if fen and len(fen) <= _MAX_LEN["fen"]:
+        try:
+            board = chess.Board(fen.strip())
+        except ValueError:
+            board = None   # can't draw it; the message alone still explains the error
+    return await _image_response(render.error_image(code, board, px), fmt)
 
 
 if STATIC_DIR.is_dir():

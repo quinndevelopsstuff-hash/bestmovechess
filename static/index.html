@@ -76,6 +76,7 @@
       </div>
     </details>
 
+    <label class="check-line"><input type="checkbox" id="show-diagram"> Show diagram</label>
     <button type="button" id="go-btn" class="primary wide" disabled>Read the board</button>
 
     <details id="fen-box">
@@ -89,6 +90,7 @@
   </section>
 
   <p id="status" class="status" role="status" aria-live="polite"></p>
+  <img id="error-img" class="diagram-img" alt="Diagram explaining the error" hidden>
 
   <section id="result" class="card" hidden>
     <div id="review-head" hidden>
@@ -118,6 +120,9 @@
       <button type="button" id="reset-btn" title="Undo all your changes" hidden>Reset</button>
     </div>
     <button type="button" id="move-btn" class="primary wide" hidden>Get best move</button>
+    <figure id="diagram" class="diagram" hidden>
+      <img id="diagram-img" class="diagram-img" alt="Diagram of the position with the best move">
+    </figure>
     <div class="fen-line">
       <code id="fen-out" class="fen"></code>
       <button type="button" id="copy-fen" class="link">Copy FEN</button>

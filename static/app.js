@@ -22,6 +22,7 @@ const els = {
   photoRef: $("photo-ref"), photoRefWrap: $("photo-ref-wrap"),
   board: $("board"), rotate: $("rotate-btn"), flip: $("flip-btn"), reset: $("reset-btn"),
   moveBtn: $("move-btn"), fenOut: $("fen-out"), copyFen: $("copy-fen"),
+  showDiagram: $("show-diagram"), diagram: $("diagram"), diagramImg: $("diagram-img"), errorImg: $("error-img"),
   picker: $("picker"), pickerTitle: $("picker-title"), pickerGrid: $("picker-grid"), pickerCancel: $("picker-cancel"),
 };
 
@@ -47,6 +48,13 @@ const state = {
 function setStatus(msg, isError = false) {
   els.status.textContent = msg;
   els.status.classList.toggle("error", isError);
+}
+
+// Error diagram (from the server's image_url, or built for GET errors) under the status line.
+function showErrorImage(url) {
+  els.errorImg.hidden = !url || !els.showDiagram.checked;
+  if (url && els.showDiagram.checked) els.errorImg.src = url;
+  else els.errorImg.removeAttribute("src");
 }
 
 function setBusy(busy) {
@@ -232,8 +240,10 @@ async function readPhoto() {
   form.append("castling", castlingValue());
   form.append("ep", els.ep.value);
   form.append("depth", els.depth.value);
+  if (els.showDiagram.checked) form.append("img_out", "true");
   setBusy(true);
   setStatus("Reading the board…");
+  showErrorImage(null);
   els.result.hidden = true;   // never leave an old answer next to a new request
   try {
     loadDetection(await request("move", { method: "POST", body: form }));
@@ -246,6 +256,7 @@ async function readPhoto() {
     } else {
       setStatus(err.detail || "Something went wrong.", true);
     }
+    showErrorImage(err.image_url);
   } finally {
     setBusy(false);
   }
@@ -256,6 +267,7 @@ async function getMove() {
   if (state.answers.has(fen)) return showAnswer();
   setBusy(true);
   setStatus("Thinking…");
+  showErrorImage(null);
   try {
     const r = await request(`move?${new URLSearchParams({ fen, depth: els.depth.value })}`);
     state.answers.set(fen, r);
@@ -263,6 +275,7 @@ async function getMove() {
     setStatus("");
   } catch (err) {
     setStatus(err.detail || "Something went wrong.", true);
+    if (err.error) showErrorImage(`img/error?${new URLSearchParams({ code: err.error, fen })}`);
   } finally {
     setBusy(false);
   }
@@ -381,6 +394,20 @@ function render() {
   els.reset.hidden = toPlacement(state.grid) === toPlacement(state.detected);
   els.fenOut.textContent = currentFen();
   drawBoard(showing ? r.best : null);
+  showDiagram(showing ? r : null);
+}
+
+// The server-drawn diagram: the image_url from the photo request, or the same /img link
+// built here for positions analysed after edits.
+function showDiagram(r) {
+  const on = Boolean(r) && els.showDiagram.checked;
+  els.diagram.hidden = !on;
+  if (!on) return;
+  const params = { fen: r.fen, best: r.best };
+  if (r.mate != null) params.mate = r.mate;
+  else if (r.eval != null) params.eval = r.eval;
+  const url = r.image_url || `img?${new URLSearchParams(params)}`;
+  if (els.diagramImg.getAttribute("src") !== url) els.diagramImg.src = url;
 }
 
 function formatEval(r) {
@@ -593,6 +620,10 @@ els.moveBtn.addEventListener("click", getMove);
 for (const el of document.querySelectorAll('input[name="turn"], input[name="castle"], #ep')) {
   el.addEventListener("change", () => { if (state.grid) render(); });
 }
+els.showDiagram.addEventListener("change", () => {
+  if (!els.showDiagram.checked) showErrorImage(null);
+  render();
+});
 els.copyFen.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(els.fenOut.textContent);
