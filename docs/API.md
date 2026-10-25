@@ -125,6 +125,7 @@ It returns every field of `GET /move`, plus:
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
 | `flipped`      | bool   | Screenshots: the board was read with Black at the bottom (`corners` then start at the bottom-right) |
 | `orientation`  | string / null | Screenshots: `chessfen` (chessfen guessed from where each side's pieces stand) or `requested` (the `flip` field); `null` for photos |
+| `hint`         | string | Only when a screenshot was read with the built-in shapes and some squares were doubtful (also on the error response): suggests calibrating |
 | `profile`      | string / null | Screenshots: the calibration profile used (`builtin` = stock chessfen shapes); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was

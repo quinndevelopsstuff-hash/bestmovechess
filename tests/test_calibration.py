@@ -181,3 +181,14 @@ def test_post_move_reports_and_accepts_profile(client, monkeypatch):
     assert r.status_code == 422 and r.json()["error"] == "unknown_profile"
     r = client.post("/move", data={"turn": "w", "source": "screenshot", "profile": "../x"}, files=files)
     assert r.status_code == 422 and r.json()["error"] == "invalid_request"
+
+
+def test_uncalibrated_misread_carries_a_hint(client):
+    board, last = random_position(14)
+    files = {"image": ("b.png", png(phone_screenshot(board, 640, last)), "image/png")}
+    r = client.post("/move", data={"turn": "w", "source": "screenshot", "profile": "builtin"}, files=files)
+    body = r.json()
+    if body.get("uncertain"):   # stock shapes on python-chess art are usually right; only assert when doubtful
+        assert "Calibrate" in body["hint"]
+    else:
+        assert "hint" not in body

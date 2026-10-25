@@ -255,9 +255,9 @@ async function readPhoto() {
     if (err.detected) {
       // Recognised, but not a legal position as-is: let the user fix it.
       loadDetection(err);
-      setStatus(`${err.detail}. Fix the board below.`, true);
+      setStatus(`${err.detail}. Fix the board below.${err.hint ? " " + err.hint : ""}`, true);
     } else {
-      setStatus(err.detail || "Something went wrong.", true);
+      setStatus((err.detail || "Something went wrong.") + (err.hint ? " " + err.hint : ""), true);
     }
     showErrorImage(err.image_url);
   } finally {

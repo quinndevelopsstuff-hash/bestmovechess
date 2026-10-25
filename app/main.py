@@ -292,6 +292,10 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "orientation": rec.orientation,
         "profile": rec.profile,
     }
+    if rec.source == "screenshot" and rec.profile == calibration.BUILTIN and rec.uncertain:
+        extra["hint"] = ("This screenshot was read with chessfen's built-in piece shapes, which often misread "
+                         "chess.com pieces. Calibrate once with a start-position screenshot (POST /profiles, "
+                         "or 'Calibrate for your screenshots' on the web page) to fix that.")
     return await best_move(request, check_position(board, {**extra, "fen": fen}), depth, extra)
 
 
