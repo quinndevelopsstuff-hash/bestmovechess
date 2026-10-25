@@ -94,6 +94,20 @@
         <button type="submit">Analyse</button>
       </form>
     </details>
+
+    <details id="calibrate-box">
+      <summary>Teach it your chess app's pieces</summary>
+      <p class="hint">Screenshots from apps with their own piece set (chess.com, for example) are read much
+        better after calibration. Upload a screenshot of the <strong>starting position with White at the
+        bottom</strong>. Only small piece outlines are saved on this server, never the screenshot.</p>
+      <form id="calibrate-form" class="row">
+        <input type="file" id="calibrate-file" accept="image/*" required>
+        <input type="text" id="calibrate-name" placeholder="Name, e.g. chesscom" required
+               pattern="[a-z0-9][a-z0-9_\-]{0,39}" title="1-40 lowercase letters, digits, - or _">
+        <button type="submit">Save</button>
+      </form>
+      <p id="profile-list" class="hint"></p>
+    </details>
   </section>
 
   <p id="status" class="status" role="status" aria-live="polite"></p>

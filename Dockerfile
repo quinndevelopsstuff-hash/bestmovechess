@@ -5,6 +5,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 ENV STOCKFISH_PATH=/usr/games/stockfish \
+    PROFILES_DIR=/data/profiles \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -16,8 +17,11 @@ RUN python scripts/download_model.py
 COPY app ./app
 COPY static ./static
 
-RUN useradd --system --no-create-home appuser
+RUN useradd --system --no-create-home appuser \
+ && mkdir -p /data/profiles && chown appuser /data/profiles
 USER appuser
+# Calibrated screenshot profiles (small piece templates); mount a volume to keep them.
+VOLUME /data/profiles
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

@@ -16,10 +16,12 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import calibrate as calibration
 from . import config, render
 from .engine import Engine, EngineUnavailable
 from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
 from .upload import UploadError, read_form
+from .vision import profiles
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bestmovechess")
@@ -260,8 +262,62 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "corners": rec.corners,
         "image_size": [width, height],
         "source": rec.source,
+        "profile": rec.profile,
     }
     return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
+
+
+# --- screenshot calibration ---
+
+_CALIBRATE_FORM = {
+    "requestBody": {
+        "required": True,
+        "content": {"multipart/form-data": {"schema": {
+            "type": "object",
+            "required": ["image", "name"],
+            "properties": {
+                "image": {"type": "string", "format": "binary",
+                          "description": "Screenshot of the starting position, White at the bottom"},
+                "name": {"type": "string", "description": "Profile name: lowercase letters, digits, - and _"},
+                "replace": {"type": "boolean", "default": False, "description": "Overwrite a profile with this name"},
+                "fen": {"type": "string", "description": "Piece placement shown, if not the starting position"},
+            },
+        }}},
+    }
+}
+
+
+@app.post("/calibrate", openapi_extra=_CALIBRATE_FORM)
+async def calibrate(request: Request):
+    """Save the pieces of a starting-position screenshot as a template profile."""
+    if not config.CALIBRATION_ENABLED:
+        raise APIError(403, "calibration_disabled", "calibration is turned off on this server (CALIBRATION_ENABLED)")
+    fields, files = await read_form(request, config.MAX_UPLOAD_BYTES)
+    image = files.pop("image", None)
+    files.clear()
+    try:
+        if not image:
+            raise APIError(422, "invalid_request", "image: field required")
+        name = fields.get("name", "")
+        replace = fields.get("replace", "").strip().lower() in ("true", "1", "yes", "on")
+        try:
+            return await run_in_threadpool(calibration.calibrate, image, name, fields.get("fen", ""), replace)
+        except FileExistsError:
+            raise APIError(409, "profile_exists", f"a profile named {name.strip().lower()!r} already exists; send replace=true to overwrite it") from None
+        except calibration.CalibrationError as exc:
+            raise APIError(422, exc.code, exc.detail) from None
+        except profiles.ProfileError as exc:
+            raise APIError(422, "invalid_request", str(exc)) from None
+        except InvalidImage as exc:
+            raise APIError(415, "invalid_image", str(exc)) from None
+    finally:
+        del image
+
+
+@app.get("/profiles")
+async def list_profiles():
+    """Template profiles screenshot recognition matches against."""
+    return {"profiles": profiles.saved_names(), "builtin": any(p.name == profiles.BUILTIN for p in profiles.all_profiles())}
 
 
 # --- diagrams ---

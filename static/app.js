@@ -625,6 +625,47 @@ els.showDiagram.addEventListener("change", () => {
   if (!els.showDiagram.checked) showErrorImage(null);
   render();
 });
+// ---------- calibration ----------
+
+async function showProfiles() {
+  try {
+    const r = await request("profiles");
+    $("profile-list").textContent = r.profiles.length
+      ? `Saved piece sets: ${r.profiles.join(", ")}.`
+      : "No piece sets saved yet" + (r.builtin ? " (the standard lichess-style pieces work without one)." : ".");
+  } catch {
+    $("profile-list").textContent = "";
+  }
+}
+
+async function calibrate(e, replace = false) {
+  if (e) e.preventDefault();
+  const file = $("calibrate-file").files[0];
+  const name = $("calibrate-name").value.trim().toLowerCase();
+  if (!file || !name) return;
+  const blob = await toUploadBlob(file);   // also strips EXIF before upload
+  if (!blob) return setStatus("Couldn't read that image.", true);
+  const form = new FormData();
+  form.append("image", blob, "calibration.jpg");
+  form.append("name", name);
+  if (replace) form.append("replace", "true");
+  setStatus("Learning the pieces…");
+  try {
+    const r = await request("calibrate", { method: "POST", body: form });
+    setStatus(`Saved piece set "${r.profile}". Screenshots using it will now be read with it.`);
+    $("calibrate-file").value = "";
+    showProfiles();
+  } catch (err) {
+    if (err.error === "profile_exists" && confirm(`A piece set called "${name}" already exists. Replace it?`)) {
+      return calibrate(null, true);
+    }
+    setStatus(err.detail || "Something went wrong.", true);
+  }
+}
+
+$("calibrate-form").addEventListener("submit", calibrate);
+$("calibrate-box").addEventListener("toggle", (e) => { if (e.target.open) showProfiles(); });
+
 els.copyFen.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(els.fenOut.textContent);

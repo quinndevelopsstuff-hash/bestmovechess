@@ -17,6 +17,8 @@ The same app that serves the web page serves a small JSON API.
 | POST   | `/move`    | Recognise a board photo, then best move     |
 | GET    | `/img`     | PNG/SVG diagram of a position and best move |
 | GET    | `/img/error` | PNG/SVG image explaining an error code    |
+| POST   | `/calibrate` | Save a piece set's templates from a screenshot |
+| GET    | `/profiles` | List saved template profiles               |
 | GET    | `/healthz` | Liveness check                              |
 
 ## Conventions
@@ -121,6 +123,7 @@ It returns every field of `GET /move`, plus:
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
+| `profile`      | string / null | Screenshot recognizer: the template profile used (`builtin` or a calibrated one); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
 taken from the side or from Black's end, the detected position may be rotated.
@@ -271,6 +274,47 @@ curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
 
 The message text comes from a fixed table, and nothing from the request is drawn as
 text. It always returns status 200.
+
+## POST /calibrate
+
+Teaches the screenshot recognizer a piece set. Send a screenshot of the **starting
+position with White at the bottom** as `multipart/form-data`:
+
+| Field     | Required | Meaning |
+|-----------|----------|---------|
+| `image`   | yes      | The screenshot (at most `MAX_UPLOAD_MB`) |
+| `name`    | yes      | Profile name: 1–40 lowercase letters, digits, `-` or `_` |
+| `replace` | no       | `true` to overwrite an existing profile with this name |
+| `fen`     | no       | Piece placement shown, if not the starting position (must contain all 12 pieces) |
+
+```sh
+curl -F image=@start.png -F name=chesscom https://<your-host>/calibrate
+```
+
+```json
+{"profile": "chesscom", "square_px": 115.0, "screenshot": true, "profiles": ["chesscom"]}
+```
+
+The 12 pieces are cut out (copies averaged) and saved as small 64×64 silhouettes. The
+screenshot itself is processed in memory and never stored. Errors:
+
+| Status | `error` | When |
+|-------:|---------|------|
+| 403 | `calibration_disabled` | `CALIBRATION_ENABLED=false` |
+| 409 | `profile_exists` | A profile with that name exists and `replace` wasn't set |
+| 415 | `invalid_image` | Not a JPEG/PNG/WebP image |
+| 422 | `board_not_found` | No flat 8×8 board in the screenshot |
+| 422 | `wrong_position` | It doesn't show the starting position (or `fen`); `detail` says which squares disagree |
+| 422 | `flipped` | The board is shown from Black's side |
+| 422 | `invalid_request` | Bad `name` or `fen`, or `MAX_PROFILES` reached |
+
+## GET /profiles
+
+```json
+{"profiles": ["chesscom", "lichess-dark"], "builtin": true}
+```
+
+`builtin` is true when the built-in python-chess profile is available (it needs Cairo).
 
 ## GET /healthz
 

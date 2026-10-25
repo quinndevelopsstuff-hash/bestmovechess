@@ -41,6 +41,9 @@ PROFILES_DIR = os.environ.get(
 )
 MAX_IMAGE_PIXELS = _int("MAX_IMAGE_PIXELS", 50_000_000)
 MAX_UPLOAD_BYTES = _int("MAX_UPLOAD_MB", 10) * 1024 * 1024
+# Screenshot calibration: allow POST /calibrate, and cap how many profiles it may create.
+CALIBRATION_ENABLED = os.environ.get("CALIBRATION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+MAX_PROFILES = _int("MAX_PROFILES", 20)
 # Base for absolute links such as image_url, e.g. https://chess.example.ts.net. When unset,
 # links are built from the request's X-Forwarded-Proto/X-Forwarded-Host (or Host) headers.
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()

@@ -225,7 +225,8 @@ def _square(lab: np.ndarray) -> Square:
         lab[:band, corner:-corner].reshape(-1, 3), lab[-band:, corner:-corner].reshape(-1, 3),
         lab[corner:-corner, :band].reshape(-1, 3), lab[corner:-corner, -band:].reshape(-1, 3)])
     bg = np.median(ring, axis=0)
-    fg = (np.linalg.norm(lab - bg, axis=2) > FG_DIST).astype(np.uint8)
+    dist = np.linalg.norm(lab - bg, axis=2)
+    fg = (dist > FG_DIST).astype(np.uint8)
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     # Keep blobs that reach the centre: pieces do, coordinate labels in corners don't.
     n, labels = cv2.connectedComponents(fg)
@@ -238,8 +239,10 @@ def _square(lab: np.ndarray) -> Square:
     background = np.pad((~keep).astype(np.uint8), 1, constant_values=1)
     _, regions = cv2.connectedComponents(background, connectivity=4)
     sil = keep | (regions[1:-1, 1:-1] != regions[0, 0])
-    inner = cv2.erode(sil.astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
-    pick = inner if inner.sum() >= 20 else sil
+    # Fill brightness: inside the silhouette, ignore pixels that show the square's own
+    # colour (cut-out details) and the anti-aliased rim; what's left is fill and strokes.
+    inner = cv2.erode(sil.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    pick = inner & (dist > 10) if (inner & (dist > 10)).sum() >= 20 else sil
     return Square(sil.astype(np.float32), float(sil.mean()), float(np.median(lab[..., 0][pick])))
 
 
@@ -285,7 +288,10 @@ def expand(placement: str) -> list[str]:
 def build_profile(name: str, img: np.ndarray, grid: Grid, placement: str = START) -> Profile:
     """Templates from a screenshot showing a known position (white at the bottom):
     each piece's silhouettes are averaged over its copies."""
-    cells = squares(img, grid)
+    return profile_from_squares(name, squares(img, grid), placement)
+
+
+def profile_from_squares(name: str, cells: list[Square], placement: str = START) -> Profile:
     masks, lums = {}, {}
     for piece in PIECES:
         found = [sq for sq, p in zip(cells, expand(placement)) if p == piece and sq.area >= EMPTY_AREA]
@@ -307,10 +313,11 @@ class Guess:
     piece: str                      # FEN letter or "."
     confidence: float
     alternatives: list[list]        # [[piece, score], ...] best first
+    score: float = 1.0              # template match of the chosen piece (1 for empty squares)
 
 
-def colour_split(lums: list[float]) -> tuple[float, float] | None:
-    """(threshold, gap) separating light from dark pieces on this board (Otsu over the
+def colour_split(lums: list[float]) -> tuple[float, float, float] | None:
+    """(threshold, dark mean, light mean) for the pieces on this board (Otsu over the
     fill brightness of occupied squares), or None without two clearly distinct groups.
     Every legal position has both kings, so a real board always has both groups."""
     v = np.sort(np.asarray(lums, np.float64))
@@ -319,8 +326,8 @@ def colour_split(lums: list[float]) -> tuple[float, float] | None:
         lo, hi = v[:i], v[i:]
         between = len(lo) * len(hi) * (hi.mean() - lo.mean()) ** 2
         if best is None or between > best[0]:
-            best = (between, (lo.max() + hi.min()) / 2, hi.mean() - lo.mean())
-    return (best[1], best[2]) if best and best[2] >= 40 else None
+            best = (between, (lo.max() + hi.min()) / 2, lo.mean(), hi.mean())
+    return best[1:] if best and best[3] - best[2] >= 40 else None
 
 
 def classify(sq: Square, profiles: list[Profile], split: tuple[float, float] | None = None) -> Guess:
@@ -337,25 +344,26 @@ def classify(sq: Square, profiles: list[Profile], split: tuple[float, float] | N
                 best_profile, best_score = prof, s
     ranked = sorted(scores, key=scores.get, reverse=True)
     s1, s2 = scores[ranked[0]], scores[ranked[1]]
+    # Colour: compare the fill brightness with this piece type's white and black versions
+    # in the profile (a white queen with lots of black detail is darker than a white pawn).
+    # With a clear light/dark split on this board, first map the profile's brightness
+    # scale onto the board's, so a set that's lighter or darker overall still matches.
+    lw, lb = best_profile.lums[ranked[0].upper()], best_profile.lums[ranked[0]]
     if split:
-        # Colour relative to the other pieces on this board.
-        threshold, _ = split
-        white = sq.lum > threshold
-        c_color = np.clip(abs(sq.lum - threshold) / 20, 0, 1)
-    else:
-        # Compare with this piece type's white and black versions in the profile
-        # (a white queen with lots of black detail is darker than a white pawn).
-        lw, lb = best_profile.lums[ranked[0].upper()], best_profile.lums[ranked[0]]
-        d_white, d_black = abs(sq.lum - lw), abs(sq.lum - lb)
-        white = d_white < d_black
-        c_color = np.clip(2 * abs(d_white - d_black) / (abs(lw - lb) + 1e-6), 0, 1)
+        _, dark, light = split
+        pw, pb = best_profile.white_lum, best_profile.black_lum
+        scale = (light - dark) / (pw - pb) if abs(pw - pb) > 1e-6 else 1.0
+        lw, lb = dark + (lw - pb) * scale, dark + (lb - pb) * scale
+    d_white, d_black = abs(sq.lum - lw), abs(sq.lum - lb)
+    white = d_white < d_black
+    c_color = np.clip(2 * abs(d_white - d_black) / (abs(lw - lb) + 1e-6), 0, 1)
     # Similar silhouettes (pawn/bishop) correlate highly, so judge the lead relative to
     # how far the runner-up is from a perfect match.
     lead = (s1 - s2) / max(1e-6, 1 - s2)
     c_type = np.clip((s1 - 0.5) / 0.35, 0, 1) * np.clip(lead / 0.5, 0, 1)
     case = str.upper if white else str.lower
     alts = [[case(t), round(scores[t], 3)] for t in ranked[:3]]
-    return Guess(case(ranked[0]), round(float(c_type * c_color), 3), alts)
+    return Guess(case(ranked[0]), round(float(c_type * c_color), 3), alts, s1)
 
 
 SQUARE_NAMES = [f"{f}{r}" for r in range(8, 0, -1) for f in "abcdefgh"]   # screen order, white at the bottom
@@ -368,7 +376,15 @@ def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
 
     cells = squares(img, grid)
     split = colour_split([sq.lum for sq in cells if sq.area >= EMPTY_AREA])
-    guesses = [classify(sq, profiles, split) for sq in cells]
+    # All pieces on a board come from one set: use the profile whose templates fit the
+    # occupied squares best, rather than mixing sets square by square.
+    best = None
+    for prof in profiles:
+        guesses = [classify(sq, [prof], split) for sq in cells]
+        fit = float(np.mean([g.score for g in guesses]))
+        if best is None or fit > best[0]:
+            best = (fit, prof, guesses)
+    _, chosen, guesses = best
     board = [[guesses[r * 8 + c].piece for c in range(8)] for r in range(8)]
     conf = {name: g.confidence for name, g in zip(SQUARE_NAMES, guesses)}
     return Recognition(
@@ -380,6 +396,7 @@ def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
         alternatives={name: g.alternatives for name, g in zip(SQUARE_NAMES, guesses) if g.confidence < 0.9 and g.alternatives},
         corners=[[round(x, 1), round(y, 1)] for x, y in grid.corners],
         source="screenshot",
+        profile=chosen.name,
     )
 
 

@@ -124,7 +124,8 @@ Run the tests with `.venv/bin/pip install pytest httpx && .venv/bin/python -m py
 
 ```sh
 docker build -t bestmovechess .
-docker run -d --name bestmovechess --restart unless-stopped -p 127.0.0.1:8000:8000 bestmovechess
+docker run -d --name bestmovechess --restart unless-stopped -p 127.0.0.1:8000:8000 \
+  -v bestmovechess-profiles:/data/profiles bestmovechess
 ```
 
 Pass settings with `-e`, e.g. `-e ENGINE_THREADS=4`. The image builds on both
@@ -148,7 +149,9 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `VISION_THREADS`     | `2`                         | ONNX Runtime threads                     |
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
-| `PROFILES_DIR`       | `profiles/`                 | Piece-template profiles for screenshot recognition |
+| `PROFILES_DIR`       | `profiles/`                 | Piece-template profiles for screenshot recognition (the systemd unit uses `/var/lib/bestmovechess`) |
+| `CALIBRATION_ENABLED`| `true`                      | Allow `POST /calibrate` |
+| `MAX_PROFILES`       | `20`                        | Most profiles `POST /calibrate` may create |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
 
 ## How recognition works
@@ -191,6 +194,44 @@ the frame. **Always check the detected position before trusting the move.**
 
 Tips: shoot from above or from White's side, fill most of the frame with the board,
 and avoid strong reflections.
+
+### Calibrating screenshots for your chess app
+
+The screenshot recognizer knows the standard "cburnett" pieces out of the box (lichess's
+default). For any other piece set, such as chess.com's, calibrate it once with a
+screenshot of the **starting position with White at the bottom**. Calibration cuts out
+the 12 pieces (averaging the copies of each) and saves them as a named profile. After
+that, screenshots in that set are matched against it. You can save several profiles
+(different piece sets, board themes, light and dark mode); each screenshot is matched
+against all of them, and the best-fitting profile is used for the whole board. The
+response's `profile` field says which.
+
+- **Web page:** open "Teach it your chess app's pieces", choose the screenshot, give it a
+  name, and tap Save.
+- **API:** `curl -F image=@start.png -F name=chesscom https://<your-host>/calibrate`
+  (`GET /profiles` lists them; send `replace=true` to overwrite one).
+- **Command line, on the server:**
+  `python -m app.calibrate start.png --name chesscom` (`--list` to see profiles). With
+  the systemd service, add `PROFILES_DIR=/var/lib/bestmovechess` so the service sees it:
+  `sudo PROFILES_DIR=/var/lib/bestmovechess .venv/bin/python -m app.calibrate start.png --name chesscom`.
+
+Calibration checks the screenshot first. The middle four ranks must be empty, every
+starting square must hold a piece, the colours must split cleanly, and all copies of a
+piece must match. If any check fails, it tells you what's wrong (for example "the board
+is shown from Black's side"). A known position other than the start can be used with
+`--fen` / `fen=`, as long as it contains all 12 kinds of piece.
+
+**Profiles stay local.** A profile is a small file (about 7 KB) holding only the 12
+piece silhouettes at 64×64 pixels and their brightness, never the screenshot. It's
+stored in `PROFILES_DIR` (`profiles/` in the repo folder, gitignored;
+`/var/lib/bestmovechess` for the systemd service; `/data/profiles` in Docker). The
+repository contains no chess.com (or other third-party) artwork: the built-in profile is
+rendered at startup from python-chess's pieces, and the tests draw their boards at test
+time.
+
+`POST /calibrate` writes files from requests, so it is capped at `MAX_PROFILES`
+profiles and can be turned off with `CALIBRATION_ENABLED=false`. Like the rest of the
+app, keep it on a private network.
 
 ### Measuring recognition
 
@@ -237,6 +278,9 @@ in memory rather than with the framework's default parser, which would write lar
 files to a temporary file on disk. The image is decoded with OpenCV straight from
 memory, and nothing in the recognition pipeline writes files. Image bytes are never
 logged. The tests fail if an upload ever touches a temporary file.
+
+Calibration screenshots are handled the same way. They're decoded in memory and dropped
+as soon as the piece silhouettes are cut out, and only those small templates are saved.
 
 Output images are drawn from the position on request and are never stored. Diagrams
 from `/img` and `/img/error` are generated in memory from the FEN alone. They never
