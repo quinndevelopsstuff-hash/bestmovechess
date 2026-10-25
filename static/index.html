@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Best Move</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Best Move</h1>
+    <p class="sub">Take a photo of a board and get Stockfish's next best move.</p>
+  </header>
+
+  <section class="card">
+    <div class="row buttons">
+      <button type="button" id="camera-btn" class="primary">Take photo</button>
+      <button type="button" id="upload-btn">Upload image</button>
+      <input type="file" id="file-input" accept="image/*" hidden>
+      <input type="file" id="capture-input" accept="image/*" capture="environment" hidden>
+    </div>
+
+    <div id="camera" class="camera" hidden>
+      <video id="video" playsinline muted></video>
+      <div class="row buttons">
+        <button type="button" id="snap-btn" class="primary">Capture</button>
+        <button type="button" id="camera-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <figure id="preview" class="preview" hidden>
+      <div class="preview-wrap">
+        <img id="preview-img" alt="Selected board photo">
+        <svg id="overlay" class="overlay" aria-hidden="true"></svg>
+      </div>
+      <button type="button" id="clear-photo" class="link">Remove photo</button>
+    </figure>
+
+    <fieldset>
+      <legend>Side to move</legend>
+      <div class="segmented" role="radiogroup">
+        <label><input type="radio" name="turn" value="w" checked><span>White</span></label>
+        <label><input type="radio" name="turn" value="b"><span>Black</span></label>
+      </div>
+    </fieldset>
+
+    <details>
+      <summary>Castling, en passant, depth</summary>
+      <p class="hint">A photo can't show these, so castling and en passant default to none.</p>
+      <fieldset class="checks">
+        <legend>Castling still allowed</legend>
+        <label><input type="checkbox" name="castle" value="K"> White O-O</label>
+        <label><input type="checkbox" name="castle" value="Q"> White O-O-O</label>
+        <label><input type="checkbox" name="castle" value="k"> Black O-O</label>
+        <label><input type="checkbox" name="castle" value="q"> Black O-O-O</label>
+      </fieldset>
+      <div class="row">
+        <label>En passant file
+          <select id="ep">
+            <option value="">none</option>
+            <option>a</option><option>b</option><option>c</option><option>d</option>
+            <option>e</option><option>f</option><option>g</option><option>h</option>
+          </select>
+        </label>
+        <label>Depth
+          <select id="depth">
+            <option value="10">10 (fast)</option>
+            <option value="15" selected>15</option>
+            <option value="20">20</option>
+            <option value="25">25 (slow)</option>
+          </select>
+        </label>
+      </div>
+    </details>
+
+    <button type="button" id="go-btn" class="primary wide" disabled>Read the board</button>
+
+    <details id="fen-box">
+      <summary>No photo? Enter a FEN or set up by hand</summary>
+      <button type="button" id="manual-btn" class="link">Set up a position by hand</button>
+      <form id="fen-form" class="row">
+        <input type="text" id="fen-input" placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" spellcheck="false" autocomplete="off">
+        <button type="submit">Analyse</button>
+      </form>
+    </details>
+  </section>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <section id="result" class="card" hidden>
+    <div id="review-head" hidden>
+      <h2 id="review-title">Check the detected position</h2>
+      <p class="hint">Tap a square to change its piece. Use Rotate if the board is turned.</p>
+    </div>
+    <div id="answer" class="answer" hidden>
+      <div class="move-line">
+        <span class="label">Best move</span>
+        <strong id="best-move"></strong>
+        <span id="best-uci" class="muted"></span>
+      </div>
+      <div id="eval" class="eval"></div>
+    </div>
+    <div id="confidence" class="confidence" hidden></div>
+    <p id="repairs" class="hint" hidden></p>
+    <details id="photo-ref" class="photo-ref" hidden open>
+      <summary>Your photo</summary>
+      <div class="preview-wrap" id="photo-ref-wrap"></div>
+    </details>
+    <div class="board-wrap">
+      <svg id="board" viewBox="0 0 800 800" role="group" aria-label="Chess board. Tap a square to change its piece."></svg>
+    </div>
+    <div class="row tools">
+      <button type="button" id="rotate-btn" title="Rotate the position 90° clockwise">Rotate ↻</button>
+      <button type="button" id="flip-btn" title="View from the other side">Flip view</button>
+      <button type="button" id="reset-btn" title="Undo all your changes" hidden>Reset</button>
+    </div>
+    <button type="button" id="move-btn" class="primary wide" hidden>Get best move</button>
+    <div class="fen-line">
+      <code id="fen-out" class="fen"></code>
+      <button type="button" id="copy-fen" class="link">Copy FEN</button>
+    </div>
+  </section>
+
+  <div id="picker" class="picker" hidden>
+    <div class="picker-sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <h3 id="picker-title"></h3>
+      <div id="picker-grid" class="picker-grid"></div>
+      <button type="button" id="picker-cancel" class="wide">Cancel</button>
+    </div>
+  </div>
+
+  <footer>Photos are processed in memory on this server and never stored.</footer>
+</main>
+<script src="pieces.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

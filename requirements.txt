@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn>=0.29
+chess>=1.10
+python-multipart>=0.0.13
+numpy>=1.26
+opencv-python-headless>=4.8
+onnxruntime>=1.17
