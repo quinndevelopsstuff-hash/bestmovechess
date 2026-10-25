@@ -25,7 +25,9 @@ EMPTY = "."
 # Input normalisation used when the model was trained.
 MEAN = np.array([0.5, 0.5, 0.5], np.float32)
 STD = np.array([0.25, 0.25, 0.25], np.float32)
-UNCERTAIN_BELOW = 0.6
+UNCERTAIN_BELOW = 0.85  # correct boards almost always have every square above ~0.89
+# Squares below this get the model's runner-up guesses, for the correction UI.
+ALTERNATIVES_BELOW = 0.9
 # The model's probabilities top out near 0.95 (it was trained with smoothed labels), and a
 # product over 64 squares is meaningless. Board confidence instead combines the weakest
 # square with how clearly one rotation of the board beat the others. Thresholds were
@@ -46,6 +48,7 @@ class Recognition:
     squares: dict[str, float]       # per-square confidence in the chosen piece
     uncertain: list[str]            # squares below UNCERTAIN_BELOW
     repairs: list[dict]             # squares changed to make the position legal
+    alternatives: dict[str, list]   # square -> [[piece, prob], ...] for less certain squares ("." = empty)
     corners: list[list[float]]      # board corners a8, h8, h1, a1 in image pixels
 
 
@@ -102,12 +105,20 @@ class Recognizer:
             cand = [pts[gr + a, gc + b] for a in (0, 1) for b in (0, 1)]
             corners.append(max(cand, key=lambda p: np.linalg.norm(p - pts[4, 4])).round(1).tolist())
 
+        alternatives = {}
+        for name, conf in squares.items():
+            if conf < ALTERNATIVES_BELOW:
+                r, c = 8 - int(name[1]), ord(name[0]) - 97
+                top = np.argsort(-probs[r, c])[:3]
+                alternatives[name] = [[CLASSES[i], round(float(probs[r, c, i]), 3)] for i in top if probs[r, c, i] >= 0.02]
+
         return Recognition(
             placement=board_to_fen(board),
             confidence=board_confidence(min(squares.values()), margin),
             squares=squares,
             uncertain=[s for s, p in squares.items() if p < UNCERTAIN_BELOW],
             repairs=repairs,
+            alternatives=alternatives,
             corners=corners,
         )
 

@@ -76,10 +76,11 @@
       </div>
     </details>
 
-    <button type="button" id="go-btn" class="primary wide" disabled>Find best move</button>
+    <button type="button" id="go-btn" class="primary wide" disabled>Read the board</button>
 
     <details id="fen-box">
-      <summary>Or enter a FEN</summary>
+      <summary>No photo? Enter a FEN or set up by hand</summary>
+      <button type="button" id="manual-btn" class="link">Set up a position by hand</button>
       <form id="fen-form" class="row">
         <input type="text" id="fen-input" placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" spellcheck="false" autocomplete="off">
         <button type="submit">Analyse</button>
@@ -90,26 +91,50 @@
   <p id="status" class="status" role="status" aria-live="polite"></p>
 
   <section id="result" class="card" hidden>
-    <div class="move-line">
-      <span class="label">Best move</span>
-      <strong id="best-move"></strong>
-      <span id="best-uci" class="muted"></span>
+    <div id="review-head" hidden>
+      <h2 id="review-title">Check the detected position</h2>
+      <p class="hint">Tap a square to change its piece. Use Rotate if the board is turned.</p>
     </div>
-    <div id="eval" class="eval"></div>
+    <div id="answer" class="answer" hidden>
+      <div class="move-line">
+        <span class="label">Best move</span>
+        <strong id="best-move"></strong>
+        <span id="best-uci" class="muted"></span>
+      </div>
+      <div id="eval" class="eval"></div>
+    </div>
     <div id="confidence" class="confidence" hidden></div>
     <p id="repairs" class="hint" hidden></p>
+    <details id="photo-ref" class="photo-ref" hidden open>
+      <summary>Your photo</summary>
+      <div class="preview-wrap" id="photo-ref-wrap"></div>
+    </details>
     <div class="board-wrap">
-      <svg id="board" viewBox="0 0 800 800" role="img" aria-label="Chess board"></svg>
+      <svg id="board" viewBox="0 0 800 800" role="group" aria-label="Chess board. Tap a square to change its piece."></svg>
     </div>
-    <div class="row buttons">
-      <button type="button" id="flip-btn">Flip board</button>
-      <button type="button" id="copy-fen">Copy FEN</button>
+    <div class="row tools">
+      <button type="button" id="rotate-btn" title="Rotate the position 90° clockwise">Rotate ↻</button>
+      <button type="button" id="flip-btn" title="View from the other side">Flip view</button>
+      <button type="button" id="reset-btn" title="Undo all your changes" hidden>Reset</button>
     </div>
-    <code id="fen-out" class="fen"></code>
+    <button type="button" id="move-btn" class="primary wide" hidden>Get best move</button>
+    <div class="fen-line">
+      <code id="fen-out" class="fen"></code>
+      <button type="button" id="copy-fen" class="link">Copy FEN</button>
+    </div>
   </section>
+
+  <div id="picker" class="picker" hidden>
+    <div class="picker-sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <h3 id="picker-title"></h3>
+      <div id="picker-grid" class="picker-grid"></div>
+      <button type="button" id="picker-cancel" class="wide">Cancel</button>
+    </div>
+  </div>
 
   <footer>Photos are processed in memory on this server and never stored.</footer>
 </main>
+<script src="pieces.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

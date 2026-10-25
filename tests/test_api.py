@@ -75,7 +75,7 @@ def fake_recognizer(monkeypatch):
 
     def use(placement, confidence=0.9):
         rec = Recognition(placement=placement, confidence=confidence, squares={}, uncertain=[],
-                          repairs=[], corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
+                          repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
         monkeypatch.setattr("app.main.recognize", lambda image: (rec, (8, 8)))
     return use
 

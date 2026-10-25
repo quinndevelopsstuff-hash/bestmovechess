@@ -50,3 +50,6 @@ def test_recognizes_real_photo():
     assert rec.confidence >= 0.8
     assert len(rec.squares) == 64 and len(rec.corners) == 4
     assert size == (900, 600)
+    for square, guesses in rec.alternatives.items():
+        assert rec.squares[square] < 0.9
+        assert all(piece in ".PNBRQKpnbrqk" and 0 < p <= 1 for piece, p in guesses)

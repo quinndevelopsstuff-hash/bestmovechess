@@ -212,6 +212,7 @@ async def post_move(request: Request):
         "squares": rec.squares,
         "uncertain": rec.uncertain,
         "repairs": rec.repairs,
+        "alternatives": rec.alternatives,
         "corners": rec.corners,
         "image_size": [width, height],
     }

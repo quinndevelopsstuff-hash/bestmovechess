@@ -12,10 +12,23 @@ per photo and needs no GPU. See [How recognition works](#how-recognition-works).
 
 ## Web page
 
-Open `http://127.0.0.1:8000/` (or your Tailscale URL). Take a photo with **Take photo**
-or pick one with **Upload image**, choose the side to move, and tap **Find best move**.
-The answer is drawn on a board with an arrow. Under "Castling, en passant, depth" you
-can set what a photo can't show. **Or enter a FEN** analyses a typed position.
+Open `http://127.0.0.1:8000/` (or your Tailscale URL).
+
+1. Take a photo with **Take photo**, or pick one with **Upload image**. Choose the side
+   to move, then tap **Read the board**.
+2. **Check the detected position.** The page shows the recognised board, its
+   confidence, and your photo with the detected board outlined. Squares the model
+   is unsure about are dashed. Tap any square to choose a different piece; the
+   model's next-best guesses are marked with percentages. **Rotate** turns the
+   position 90° if the board was photographed from the side or from Black's end.
+   **Reset** undoes your changes.
+3. Tap **Get best move**. If you didn't change anything, the answer appears straight
+   away (it was computed with the photo). The move is drawn as an arrow.
+
+Under "Castling, en passant, depth" you can set what a photo can't show: castling
+and en passant default to none, and castling options that the position rules out
+are disabled. With no photo, enter a FEN or tap **Set up a position by hand** and
+edit the board directly.
 
 The live camera view needs HTTPS (or `localhost`); over plain HTTP the button opens
 the phone's camera app instead. Photos are shrunk to 1600 px and re-encoded as JPEG
@@ -59,6 +72,7 @@ Returns the same fields as `GET /move`, plus:
 | `squares`    | Per-square model confidence, e.g. `{"e4": 0.95, ...}`                    |
 | `uncertain`  | Squares the model is unsure about                                        |
 | `repairs`    | Squares changed to make the position legal (e.g. a second white king)    |
+| `alternatives` | For squares below 0.9: the model's top guesses, `[["n", 0.7], ["b", 0.2]]` (`.` = empty) |
 | `corners`    | Image pixels of the board's a8, h8, h1, a1 corners                       |
 | `image_size` | `[width, height]` those coordinates refer to                             |
 
@@ -199,6 +213,9 @@ and avoid strong reflections.
 - ChessLens was trained on renders from [chesscog](https://osf.io/xf3ka/) (Wölflein &
   Arandjelović, CC BY 4.0) and photos from
   [samryan18/chess-dataset](https://github.com/samryan18/chess-dataset) (MIT).
+- Piece shapes: [Noto Sans Symbols 2](https://github.com/notofonts/symbols) outlines
+  (SIL Open Font License 1.1, see `static/pieces-OFL.txt`). They are drawn as SVG
+  paths, so they look the same on every device and dark mode can't recolour them.
 - [Stockfish](https://stockfishchess.org/) (GPLv3) is installed separately and run as
   a separate program.
 
