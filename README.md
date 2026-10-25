@@ -49,9 +49,9 @@ in the browser before upload, which also strips EXIF data such as location.
 Full reference: **[docs/API.md](docs/API.md)**. Interactive docs are at `/docs`.
 
 ```sh
-# Best move for a FEN
+# Best move for a FEN (always includes image_url: a diagram of the move, or of the error)
 curl -G http://127.0.0.1:8000/move --data-urlencode 'fen=rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
-# {"best":"c7c5","san":"c5","eval":0.32,"mate":null,"depth":15,"fen":"..."}
+# {"best":"e7e5","san":"e5","eval":0.31,"mate":null,"depth":15,"fen":"...","image_url":"https://<your-host>/img?..."}
 
 # Best move for a photo (plus the detected position and its confidence)
 curl -F image=@board.jpg -F turn=w http://127.0.0.1:8000/move
@@ -70,8 +70,9 @@ curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
   --data-urlencode 'fen=8/8/8/8/8/8/8/K7 w - - 0 1'
 ```
 
-`img_out` (`true`/`false`, default `false`) adds `image_url` to the `POST /move`
-response. If the request fails, the JSON error gets an `image_url` pointing at
+`GET /move` always includes `image_url`, on success and on every error. For
+`POST /move` it's opt-in: `img_out` (`true`/`false`, default `false`) adds `image_url`
+to the response. If the request fails, the JSON error gets an `image_url` pointing at
 `/img/error` instead. Links are absolute. They use `PUBLIC_BASE_URL` if it's set;
 otherwise they're built from the `X-Forwarded-Proto`/`X-Forwarded-Host` headers that
 `tailscale serve` sends, or from the `Host` header.

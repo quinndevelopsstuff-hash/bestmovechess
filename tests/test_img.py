@@ -201,3 +201,62 @@ def test_img_out_error_url_carries_uncertain(client, monkeypatch):
     body = post(client, {"turn": "w", "img_out": "true"}).json()
     q = parse_qs(urlparse(body["image_url"]).query)
     assert q["code"] == ["missing_king"] and q["uncertain"] == ["e8,d8"]
+
+
+# --- GET /move always returns image_url ---
+
+FWD = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "pi.example.ts.net"}
+
+
+def follow(client, url):
+    u = urlparse(url)
+    assert (u.scheme, u.netloc) == ("https", "pi.example.ts.net")
+    return client.get(f"{u.path}?{u.query}")
+
+
+@needs_engine
+def test_get_move_success_has_image_url(client):
+    body = client.get("/move", params={"fen": ITALIAN, "depth": "6"}, headers=FWD).json()
+    assert urlparse(body["image_url"]).path == "/img"
+    assert parse_qs(urlparse(body["image_url"]).query)["best"] == [body["best"]]
+    r = follow(client, body["image_url"])
+    assert r.status_code == 200 and r.content.startswith(PNG)
+
+
+@pytest.mark.parametrize("params, status, error, code, has_fen", [
+    ({"fen": "not a fen"}, 400, "invalid_fen", "invalid_fen", False),
+    ({"fen": "8/8/8/8/8/8/8/K7 w - - 0 1"}, 422, "illegal_position", "missing_king", True),
+    ({"fen": "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"}, 422, "game_over", "game_over", True),
+    ({}, 422, "invalid_request", "invalid_request", False),
+    ({"fen": ITALIAN, "depth": "lots"}, 422, "invalid_request", "invalid_request", True),
+    ({"fen": ITALIAN, "depth": "999"}, 422, "invalid_request", "invalid_request", True),
+])
+def test_get_move_errors_have_image_url(client, params, status, error, code, has_fen):
+    r = client.get("/move", params=params, headers=FWD)
+    body = r.json()
+    assert r.status_code == status and body["error"] == error
+    q = parse_qs(urlparse(body["image_url"]).query)
+    assert urlparse(body["image_url"]).path == "/img/error" and q["code"] == [code]
+    assert ("fen" in q) == has_fen
+    img = follow(client, body["image_url"])
+    assert img.status_code == 200 and img.content.startswith(PNG)
+
+
+def test_get_move_engine_down_has_image_url(client, monkeypatch):
+    from app.engine import EngineUnavailable
+
+    async def down(*a, **k):
+        raise EngineUnavailable("gone")
+    monkeypatch.setattr(client.app.state.engine, "analyse", down)
+    body = client.get("/move", params={"fen": ITALIAN}).json()
+    assert body["error"] == "engine_unavailable"
+    assert parse_qs(urlparse(body["image_url"]).query)["code"] == ["engine_unavailable"]
+
+
+def test_get_move_unexpected_error_has_image_url(client, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("bug")
+    monkeypatch.setattr("app.main.best_move", boom)
+    r = client.get("/move", params={"fen": ITALIAN})
+    assert r.status_code == 500 and r.json()["error"] == "internal_error"
+    assert urlparse(r.json()["image_url"]).path == "/img/error"

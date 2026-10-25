@@ -52,16 +52,32 @@ curl -G http://127.0.0.1:8000/move \
 ```
 
 ```json
-{"best": "c7c5", "san": "c5", "eval": 0.32, "mate": null, "depth": 12,
- "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"}
+{"best": "e7e5", "san": "e5", "eval": 0.31, "mate": null, "depth": 12,
+ "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+ "image_url": "https://<your-host>/img?fen=rnbqkbnr%2Fpppppppp%2F...+b+KQkq+-+0+1&best=e7e5&turn=b&eval=0.31"}
 ```
 
 A forced mate:
 
 ```json
 {"best": "a1a8", "san": "Ra8#", "eval": null, "mate": 1, "depth": 10,
- "fen": "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"}
+ "fen": "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", "image_url": "https://<your-host>/img?...&mate=1"}
 ```
+
+**Every `GET /move` response includes `image_url`**, whatever happens. On success it
+links to [`GET /img`](#get-img): a diagram of the position with the best move drawn.
+On any error it links to [`GET /img/error`](#get-imgerror), with the matching code.
+That covers a bad FEN, an illegal position, a finished game, a missing or bad
+parameter, the engine being down, and unexpected server errors. For a position that
+parses but can't be analysed, the error also includes `fen`, and the image draws the
+board with the problem squares marked:
+
+```json
+{"error": "illegal_position", "detail": "Black has no king", "fen": "8/8/8/8/8/8/8/K7 w - - 0 1",
+ "image_url": "https://<your-host>/img/error?code=missing_king&fen=8%2F8%2F8%2F8%2F8%2F8%2F8%2FK7+w+-+-+0+1"}
+```
+
+Links are absolute, built the same way as for `POST /move` (see `img_out` below).
 
 | Field   | Type          | Meaning                                       |
 |---------|---------------|-----------------------------------------------|
@@ -71,6 +87,7 @@ A forced mate:
 | `mate`  | int / null    | Moves to forced mate (+ White, − Black)       |
 | `depth` | int           | Depth actually reached                        |
 | `fen`   | string        | The position analysed, normalised             |
+| `image_url` | string    | Absolute link to a diagram of the move (always present) |
 
 ## POST /move
 
@@ -306,7 +323,8 @@ It reports that the web server is up. It doesn't check Stockfish or the model.
 | 413    | `too_large`               | Upload over `MAX_UPLOAD_MB`, or a text field over 1 KB |
 | 415    | `unsupported_media_type`  | `POST /move` body isn't `multipart/form-data` |
 | 415    | `invalid_image`           | The upload isn't a decodable JPEG/PNG/WebP, or exceeds `MAX_IMAGE_PIXELS` |
-| 422    | `invalid_request`         | Missing or invalid parameter (`detail` names it, e.g. `depth: Input should be less than or equal to 25`) |
+| 422    | `invalid_request`         | Missing or invalid parameter (`detail` names it, e.g. `depth: must be between 1 and 25`) |
+| 500    | `internal_error`          | `GET /move` only: an unexpected server error (still with `image_url`) |
 | 422    | `illegal_position`        | Valid FEN syntax but impossible position; `detail` says why (e.g. `Black has no king`) |
 | 422    | `game_over`               | Checkmate or stalemate: no move to suggest |
 | 422    | `board_not_found`         | No chessboard found in the photo |
