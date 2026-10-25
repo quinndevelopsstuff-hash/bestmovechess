@@ -1,8 +1,111 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>bestmovechess</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Best Move</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
 <body>
-<h1>bestmovechess</h1>
-<p>The API is running. Try <a href="move?fen=rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR%20w%20KQkq%20-%200%201">/move?fen=…</a>.</p>
+<main>
+  <header>
+    <h1>Best Move</h1>
+    <p class="sub">Take a photo of a board and get Stockfish's next best move.</p>
+  </header>
+
+  <section class="card">
+    <div class="row buttons">
+      <button type="button" id="camera-btn" class="primary">Take photo</button>
+      <button type="button" id="upload-btn">Upload image</button>
+      <input type="file" id="file-input" accept="image/*" hidden>
+      <input type="file" id="capture-input" accept="image/*" capture="environment" hidden>
+    </div>
+
+    <div id="camera" class="camera" hidden>
+      <video id="video" playsinline muted></video>
+      <div class="row buttons">
+        <button type="button" id="snap-btn" class="primary">Capture</button>
+        <button type="button" id="camera-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <figure id="preview" class="preview" hidden>
+      <img id="preview-img" alt="Selected board photo">
+      <button type="button" id="clear-photo" class="link">Remove photo</button>
+    </figure>
+
+    <fieldset>
+      <legend>Side to move</legend>
+      <div class="segmented" role="radiogroup">
+        <label><input type="radio" name="turn" value="w" checked><span>White</span></label>
+        <label><input type="radio" name="turn" value="b"><span>Black</span></label>
+      </div>
+    </fieldset>
+
+    <details>
+      <summary>Castling, en passant, depth</summary>
+      <p class="hint">A photo can't show these, so castling and en passant default to none.</p>
+      <fieldset class="checks">
+        <legend>Castling still allowed</legend>
+        <label><input type="checkbox" name="castle" value="K"> White O-O</label>
+        <label><input type="checkbox" name="castle" value="Q"> White O-O-O</label>
+        <label><input type="checkbox" name="castle" value="k"> Black O-O</label>
+        <label><input type="checkbox" name="castle" value="q"> Black O-O-O</label>
+      </fieldset>
+      <div class="row">
+        <label>En passant file
+          <select id="ep">
+            <option value="">none</option>
+            <option>a</option><option>b</option><option>c</option><option>d</option>
+            <option>e</option><option>f</option><option>g</option><option>h</option>
+          </select>
+        </label>
+        <label>Depth
+          <select id="depth">
+            <option value="10">10 (fast)</option>
+            <option value="15" selected>15</option>
+            <option value="20">20</option>
+            <option value="25">25 (slow)</option>
+          </select>
+        </label>
+      </div>
+    </details>
+
+    <button type="button" id="go-btn" class="primary wide" disabled>Find best move</button>
+
+    <details id="fen-box">
+      <summary>Or enter a FEN</summary>
+      <form id="fen-form" class="row">
+        <input type="text" id="fen-input" placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" spellcheck="false" autocomplete="off">
+        <button type="submit">Analyse</button>
+      </form>
+    </details>
+  </section>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <section id="result" class="card" hidden>
+    <div class="move-line">
+      <span class="label">Best move</span>
+      <strong id="best-move"></strong>
+      <span id="best-uci" class="muted"></span>
+    </div>
+    <div id="eval" class="eval"></div>
+    <div id="confidence" class="confidence" hidden></div>
+    <div class="board-wrap">
+      <svg id="board" viewBox="0 0 800 800" role="img" aria-label="Chess board"></svg>
+    </div>
+    <div class="row buttons">
+      <button type="button" id="flip-btn">Flip board</button>
+      <button type="button" id="copy-fen">Copy FEN</button>
+    </div>
+    <code id="fen-out" class="fen"></code>
+  </section>
+
+  <footer>Photos are processed in memory on this server and never stored.</footer>
+</main>
+<script src="app.js"></script>
 </body>
 </html>

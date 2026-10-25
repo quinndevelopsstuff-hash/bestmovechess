@@ -5,8 +5,11 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import re
+
 import chess
 from fastapi import FastAPI, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +17,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config
 from .engine import Engine, EngineUnavailable
+from .recognize import RecognitionUnavailable, recognize
+from .upload import UploadError, read_form
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bestmovechess")
@@ -22,8 +27,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 class APIError(Exception):
-    def __init__(self, status: int, error: str, detail: str) -> None:
-        self.status, self.error, self.detail = status, error, detail
+    def __init__(self, status: int, error: str, detail: str, extra: dict | None = None) -> None:
+        self.status, self.error, self.detail, self.extra = status, error, detail, extra or {}
 
 
 @asynccontextmanager
@@ -61,6 +66,11 @@ async def access_log(request: Request, call_next):
 
 @app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError):
+    return JSONResponse({"error": exc.error, "detail": exc.detail, **exc.extra}, status_code=exc.status)
+
+
+@app.exception_handler(UploadError)
+async def upload_error_handler(request: Request, exc: UploadError):
     return JSONResponse({"error": exc.error, "detail": exc.detail}, status_code=exc.status)
 
 
@@ -99,24 +109,24 @@ _STATUS_MESSAGES = [
 ]
 
 
-def parse_fen(fen: str) -> chess.Board:
+def parse_fen(fen: str, extra: dict | None = None) -> chess.Board:
     fen = fen.strip()
     try:
         board = chess.Board(fen)
     except ValueError as exc:
-        raise APIError(400, "invalid_fen", f"could not parse FEN: {exc}") from None
+        raise APIError(400, "invalid_fen", f"could not parse FEN: {exc}", extra) from None
     status = board.status()
     if status != chess.STATUS_VALID:
         problems = list(dict.fromkeys(msg for flag, msg in _STATUS_MESSAGES if status & flag))
-        raise APIError(422, "illegal_position", "; ".join(problems) or "illegal position")
+        raise APIError(422, "illegal_position", "; ".join(problems) or "illegal position", extra)
     return board
 
 
-async def best_move(request: Request, board: chess.Board, depth: int) -> dict:
+async def best_move(request: Request, board: chess.Board, depth: int, extra: dict | None = None) -> dict:
     if board.is_checkmate():
-        raise APIError(422, "game_over", "no legal moves: checkmate")
+        raise APIError(422, "game_over", "no legal moves: checkmate", extra)
     if board.is_stalemate():
-        raise APIError(422, "game_over", "no legal moves: stalemate")
+        raise APIError(422, "game_over", "no legal moves: stalemate", extra)
     try:
         info = await request.app.state.engine.analyse(board, depth)
     except EngineUnavailable as exc:
@@ -134,6 +144,7 @@ async def best_move(request: Request, board: chess.Board, depth: int) -> dict:
         "mate": score.mate(),
         "depth": info.get("depth"),
         "fen": board.fen(),
+        **(extra or {}),
     }
 
 
@@ -151,6 +162,48 @@ async def get_move(
     depth: int = Query(config.DEFAULT_DEPTH, ge=1, le=config.MAX_DEPTH),
 ):
     return await best_move(request, parse_fen(fen), depth)
+
+
+_CASTLING_RE = re.compile(r"^(-|K?Q?k?q?)$")
+
+
+@app.post("/move")
+async def post_move(request: Request):
+    """Multipart form: image (file), turn=w|b, optional castling (e.g. "KQkq" or "-"),
+    optional ep (en passant file a-h), optional depth."""
+    fields, files = await read_form(request, config.MAX_UPLOAD_BYTES)
+    image = files.pop("image", None)
+    files.clear()
+    if not image:
+        raise APIError(422, "invalid_request", "image: field required")
+
+    turn = fields.get("turn", "").strip().lower()
+    if turn not in ("w", "b"):
+        raise APIError(422, "invalid_request", "turn: must be 'w' or 'b'")
+    castling = fields.get("castling", "").strip() or "-"
+    if not _CASTLING_RE.match(castling):
+        raise APIError(422, "invalid_request", "castling: use a subset of 'KQkq' in that order, or '-'")
+    ep = fields.get("ep", "").strip().lower()
+    if ep and (len(ep) != 1 or ep not in "abcdefgh"):
+        raise APIError(422, "invalid_request", "ep: must be a file letter a-h")
+    ep_square = f"{ep}{'6' if turn == 'w' else '3'}" if ep else "-"
+    try:
+        depth = int(fields.get("depth") or config.DEFAULT_DEPTH)
+    except ValueError:
+        depth = 0
+    if not 1 <= depth <= config.MAX_DEPTH:
+        raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
+
+    try:
+        placement, confidence = await run_in_threadpool(recognize, image)
+    except RecognitionUnavailable as exc:
+        raise APIError(501, "recognition_unavailable", str(exc)) from None
+    finally:
+        del image
+
+    fen = f"{placement} {turn} {castling} {ep_square} 0 1"
+    extra = {"detected": placement, "confidence": round(confidence, 3)}
+    return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
 
 
 if STATIC_DIR.is_dir():

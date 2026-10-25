@@ -62,3 +62,107 @@ def test_depth_out_of_range(client):
     r = client.get("/move", params={"fen": START, "depth": 999})
     assert r.status_code == 422
     assert r.json()["error"] == "invalid_request"
+
+
+# --- POST /move (photo upload) ---
+
+IMAGE = b"\xff\xd8\xff\xe0fake-jpeg-bytes-SECRET"
+
+
+@pytest.fixture
+def fake_recognizer(monkeypatch):
+    def use(placement, confidence=0.9):
+        monkeypatch.setattr("app.main.recognize", lambda image: (placement, confidence))
+    return use
+
+
+@pytest.fixture
+def no_disk(monkeypatch):
+    """Fail the test if anything tries to create a temporary file."""
+    import tempfile
+
+    def boom(*a, **k):
+        raise AssertionError("upload touched the disk")
+    for name in ("TemporaryFile", "NamedTemporaryFile", "SpooledTemporaryFile", "mkstemp", "mkdtemp"):
+        monkeypatch.setattr(tempfile, name, boom)
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", boom)
+
+
+def post(client, data=None, image=IMAGE):
+    # Without an image, send some other file so the request is still multipart.
+    files = {"image": ("board.jpg", image, "image/jpeg")} if image is not None else {"other": ("x", b"x")}
+    return client.post("/move", data={"turn": "w"} if data is None else data, files=files)
+
+
+def test_post_without_recognizer(client, no_disk):
+    r = post(client)
+    assert r.status_code == 501
+    assert r.json()["error"] == "recognition_unavailable"
+
+
+@needs_engine
+def test_post_success(client, fake_recognizer, no_disk, caplog):
+    fake_recognizer("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR", 0.87)
+    big = IMAGE + b"x" * (3 * 1024 * 1024)  # bigger than Starlette's 1 MB spool threshold
+    with caplog.at_level("DEBUG"):
+        r = post(client, {"turn": "b", "castling": "KQkq", "depth": "6"}, image=big)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["fen"] == "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    assert body["confidence"] == 0.87
+    assert body["best"]
+    assert "SECRET" not in caplog.text
+
+
+def test_post_illegal_position_returns_detection(client, fake_recognizer):
+    fake_recognizer("8/8/8/8/8/8/8/8", 0.4)
+    r = post(client)
+    assert r.status_code == 422
+    body = r.json()
+    assert body["error"] == "illegal_position"
+    assert body["detected"] == "8/8/8/8/8/8/8/8" and body["confidence"] == 0.4
+    assert body["fen"] == "8/8/8/8/8/8/8/8 w - - 0 1"
+
+
+def test_post_impossible_castling(client, fake_recognizer):
+    fake_recognizer("4k3/8/8/8/8/8/8/4K3")
+    r = post(client, {"turn": "w", "castling": "K"})
+    assert r.status_code == 422
+    assert "castling" in r.json()["detail"]
+
+
+def test_post_en_passant(client, fake_recognizer):
+    fake_recognizer("4k3/8/8/3pP3/8/8/8/4K3")
+    r = post(client, {"turn": "w", "ep": "d", "depth": "4"})
+    if shutil.which(config.STOCKFISH_PATH):
+        assert r.json()["fen"] == "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"
+
+
+@pytest.mark.parametrize("data", [{}, {"turn": "x"}, {"turn": "w", "castling": "QK"},
+                                  {"turn": "w", "ep": "z"}, {"turn": "w", "depth": "99"}])
+def test_post_bad_fields(client, data):
+    r = post(client, data)
+    assert r.status_code == 422
+    assert r.json()["error"] == "invalid_request"
+
+
+def test_post_missing_image(client):
+    r = post(client, image=None)
+    assert r.status_code == 422
+    assert "image" in r.json()["detail"]
+
+
+def test_post_too_large(client, no_disk):
+    r = post(client, image=b"x" * (config.MAX_UPLOAD_BYTES + 1))
+    assert r.status_code == 413
+    assert r.json()["error"] == "too_large"
+
+
+def test_post_not_multipart(client):
+    r = client.post("/move", json={"turn": "w"})
+    assert r.status_code == 415
+
+
+def test_frontend_served(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "Best Move" in r.text

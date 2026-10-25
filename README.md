@@ -6,7 +6,19 @@ the best move.
 
 Runs well on a Raspberry Pi 5, and on any Linux/macOS machine or in Docker.
 
-> **Status:** phase 1 (FEN API, systemd, Docker). Photo upload and recognition are in progress.
+> **Status:** FEN API and web page work. Photo recognition is in progress, so photo
+> uploads currently return `501 recognition_unavailable`.
+
+## Web page
+
+Open `http://127.0.0.1:8000/` (or your Tailscale URL). Take a photo with **Take photo**
+or pick one with **Upload image**, choose the side to move, and tap **Find best move**.
+The answer is drawn on a board with an arrow. Under "Castling, en passant, depth" you
+can set what a photo can't show. **Or enter a FEN** analyses a typed position.
+
+The live camera view needs HTTPS (or `localhost`); over plain HTTP the button opens
+the phone's camera app instead. Photos are shrunk to 1600 px and re-encoded as JPEG
+in the browser before upload, which also strips EXIF data such as location.
 
 ## API
 
@@ -25,6 +37,26 @@ Runs well on a Raspberry Pi 5, and on any Linux/macOS machine or in Docker.
 - Each search is also capped by wall-clock time (`ENGINE_MAX_SECONDS`), so on slow
   hardware the returned `depth` can be lower than requested.
 
+### `POST /move` (photo)
+
+`multipart/form-data` with:
+
+| Field      | Required | Meaning                                                         |
+|------------|----------|-----------------------------------------------------------------|
+| `image`    | yes      | Photo of the board, at most 10 MB (`MAX_UPLOAD_MB`)             |
+| `turn`     | yes      | `w` or `b`, the side to move                                    |
+| `castling` | no       | Castling rights still available, e.g. `KQkq`, `Kq`; default `-` |
+| `ep`       | no       | En passant file `a`-`h` if the last move was a double pawn push |
+| `depth`    | no       | As for `GET`                                                    |
+
+Returns the same fields as `GET /move`, plus `detected` (the recognised piece
+placement) and `confidence` (0-1). If the recognised position is illegal, the 422
+error also includes `fen`, `detected` and `confidence` so the page can show it.
+
+```sh
+curl -F image=@board.jpg -F turn=w http://127.0.0.1:8000/move
+```
+
 ### Errors
 
 Errors are always JSON: `{"error": "<code>", "detail": "<message>"}`.
@@ -35,6 +67,9 @@ Errors are always JSON: `{"error": "<code>", "detail": "<message>"}`.
 | 422    | `illegal_position`   | Parses, but isn't a legal position (e.g. no king) |
 | 422    | `game_over`          | Checkmate or stalemate, so there's no move        |
 | 422    | `invalid_request`    | Missing or out-of-range parameter                 |
+| 413    | `too_large`          | Upload bigger than `MAX_UPLOAD_MB`                |
+| 415    | `unsupported_media_type` | `POST` body isn't `multipart/form-data`       |
+| 501    | `recognition_unavailable` | Photo recognition isn't available           |
 | 503    | `engine_unavailable` | Stockfish isn't installed or crashed              |
 
 `GET /healthz` returns `{"ok": true}`.
@@ -124,6 +159,10 @@ across reboots. HTTPS also lets phone browsers use the camera. Use `tailscale se
 off: `tailscale serve reset`.
 
 ## Privacy
+
+Uploaded images are processed in memory only and never stored. The upload is parsed
+in memory rather than with the framework's default parser, which would write large
+files to a temporary file on disk. Image bytes are never logged.
 
 Logs contain only the request method, path, status code, and timing. Query strings
 and request bodies are never logged (uvicorn's own access log is disabled with
