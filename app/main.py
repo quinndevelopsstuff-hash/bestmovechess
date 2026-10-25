@@ -164,10 +164,32 @@ async def healthz():
 @app.get("/move")
 async def get_move(
     request: Request,
-    fen: str = Query(..., description="Position in FEN"),
-    depth: int = Query(config.DEFAULT_DEPTH, ge=1, le=config.MAX_DEPTH),
+    fen: str = Query("", description="Position in FEN"),
+    depth: str = Query("", description=f"Search depth, 1-{config.MAX_DEPTH} (default {config.DEFAULT_DEPTH})"),
 ):
-    return await best_move(request, parse_fen(fen), depth)
+    """Best move for a FEN. Every response, success or error, includes `image_url`: a
+    diagram of the move, or an image explaining what went wrong. Parameters are checked
+    here rather than by FastAPI so that bad ones get an image too."""
+    try:
+        if not fen.strip():
+            raise APIError(422, "invalid_request", "fen: field required")
+        try:
+            d = int(depth) if depth.strip() else config.DEFAULT_DEPTH
+        except ValueError:
+            raise APIError(422, "invalid_request", "depth: must be a whole number") from None
+        if not 1 <= d <= config.MAX_DEPTH:
+            raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
+        result = await best_move(request, parse_fen(fen), d)
+    except APIError as exc:
+        attach_error_image(request, exc, fen)
+        raise
+    except Exception as exc:   # anything unexpected still gets a JSON error and an image
+        log.error("GET /move failed: %s", type(exc).__name__)
+        err = APIError(500, "internal_error", "something went wrong")
+        attach_error_image(request, err)
+        raise err from None
+    result["image_url"] = board_image_url(request, result)
+    return result
 
 
 _CASTLING_RE = re.compile(r"^(-|K?Q?k?q?)$")
@@ -328,6 +350,17 @@ def error_image_url(request: Request, exc: APIError) -> str:
         if exc.extra.get("uncertain"):
             params["uncertain"] = ",".join(exc.extra["uncertain"])
     return f"{public_base_url(request)}/img/error?{urlencode(params)}"
+
+
+def attach_error_image(request: Request, exc: APIError, fen: str = "") -> None:
+    """Add image_url to an error. For a position that parses (illegal or finished), the
+    image draws it with the offending squares marked."""
+    if fen and "fen" not in exc.extra and exc.error != "invalid_fen":
+        try:
+            exc.extra["fen"] = chess.Board(fen.strip()).fen(en_passant="fen")
+        except ValueError:
+            pass
+    exc.extra["image_url"] = error_image_url(request, exc)
 
 
 class ImageError(Exception):
