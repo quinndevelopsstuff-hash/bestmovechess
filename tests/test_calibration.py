@@ -192,3 +192,18 @@ def test_uncalibrated_misread_carries_a_hint(client):
         assert "Calibrate" in body["hint"]
     else:
         assert "hint" not in body
+
+
+def test_bundled_profile_is_listed_and_loadable(tmp_path, monkeypatch):
+    import shutil
+    bundled = tmp_path / "b"
+    bundled.mkdir()
+    cal.save(cal.calibrate(start_rgb(), "shipped"), bundled)
+    monkeypatch.setattr(cal, "BUNDLED_DIR", bundled)
+    assert cal.names(config.PROFILE_DIR) == ["shipped"]
+    assert cal.load("shipped", config.PROFILE_DIR).name == "shipped"
+    assert not cal.delete("shipped", config.PROFILE_DIR) and (bundled / "shipped.npz").exists()
+    board, last = random_position(15)
+    rec, _ = recognize(png(phone_screenshot(board, 640, last)), "screenshot", profile="shipped")
+    assert rec.profile == "shipped" and rec.placement == board.board_fen()
+    shutil.rmtree(bundled)

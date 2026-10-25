@@ -195,7 +195,7 @@ and all 8 mistakes were among the squares it flagged as doubtful. Its templates 
 is what calibration fixes. It takes about 1–2 seconds per screenshot on a desktop CPU,
 and more on a Pi.
 
-**Calibration** (`app/vision/calibration.py`). Take one clean screenshot of the *starting
+**Calibration** (`app/vision/calibration.py`). One profile, `chesscom-iphone` (made from an iPhone chess.com screenshot, in `app/vision/profiles/`), ships with the app and is used automatically, so chess.com screenshots from an iPhone should work without any setup; calibrate your own if yours look different. Take one clean screenshot of the *starting
 position* (no moves, nothing being dragged) the same way you take the ones you analyse,
 then run `python -m app.calibrate start.png --name iphone-green` or use "Calibrate for your
 screenshots" on the web page. The app cuts the 12 piece shapes (one per colour and

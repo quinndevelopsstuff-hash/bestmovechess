@@ -44,6 +44,8 @@ except ImportError:   # Python < 3.13, or not installed
     chessfen = None
 
 BUILTIN = "builtin"
+# Profiles shipped with the app (read-only); PROFILE_DIR holds the ones you make yourself.
+BUNDLED_DIR = Path(__file__).resolve().parent / "profiles"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 
 
@@ -136,6 +138,8 @@ def save(profile: Profile, directory: str | os.PathLike) -> Path:
 
 def load(name: str, directory: str | os.PathLike) -> Profile:
     path = _path(directory, name)
+    if not path.exists() and _path(BUNDLED_DIR, name).exists():
+        path = _path(BUNDLED_DIR, name)
     try:
         with np.load(path) as data:
             shapes = {(color, pt): np.asarray(data[_key(color, pt)], dtype=bool)
@@ -150,10 +154,13 @@ def load(name: str, directory: str | os.PathLike) -> Profile:
 
 
 def names(directory: str | os.PathLike) -> list[str]:
-    try:
-        return sorted(p.stem for p in Path(directory).glob("*.npz") if valid_name(p.stem))
-    except OSError:
-        return []
+    found = set()
+    for folder in (Path(directory), BUNDLED_DIR):
+        try:
+            found.update(p.stem for p in folder.glob("*.npz") if valid_name(p.stem))
+        except OSError:
+            pass
+    return sorted(found)
 
 
 def load_all(directory: str | os.PathLike) -> list[Profile]:
