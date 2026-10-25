@@ -105,7 +105,7 @@ details[open] > summary { margin-bottom: 8px; }
 #board .light { fill: var(--sq-light); }
 #board .dark { fill: var(--sq-dark); }
 #board .hl { fill: var(--hl); }
-#board .unsure { fill: none; stroke: #e5484d; stroke-width: 6; stroke-dasharray: 14 8; }
+#board .unsure { fill: rgba(245, 165, 36, 0.25); stroke: #f5a524; stroke-width: 6; stroke-dasharray: 14 8; }
 #board .coord { font: 600 20px system-ui, sans-serif; }
 #board { cursor: pointer; }
 .pc { paint-order: stroke; stroke-linejoin: round; pointer-events: none; }

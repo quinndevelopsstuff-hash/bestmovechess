@@ -25,6 +25,7 @@ ARROW = "#15781B"
 FROM_FILL = "#f7ec5a99"
 TO_FILL = "#f7ec5acc"
 BAD_FILL = "#e5484dcc"
+UNSURE_FILL = "#f5a524b3"   # squares the recognizer was unsure about
 
 # Error images: code -> (title, default detail). Unknown codes fall back to "error".
 ERRORS = {
@@ -106,11 +107,12 @@ def format_eval(eval_: float | None, mate: int | None) -> str:
     return ""
 
 
-def _board_svg(board: chess.Board, size: int, move: chess.Move | None = None, bad: list[int] = ()) -> str:
-    fill = {}
+def _board_svg(board: chess.Board, size: int, move: chess.Move | None = None, bad: list[int] = (),
+               unsure: list[int] = ()) -> str:
+    fill = {sq: UNSURE_FILL for sq in unsure}
     arrows = []
     if move is not None:
-        fill = {move.from_square: FROM_FILL, move.to_square: TO_FILL}
+        fill.update({move.from_square: FROM_FILL, move.to_square: TO_FILL})
         arrows = [chess.svg.Arrow(move.from_square, move.to_square, color=ARROW)]
     for sq in bad:
         if sq is not None:
@@ -162,8 +164,9 @@ def board_image(board: chess.Board, move: chess.Move | None, eval_: float | None
 
 
 def error_image(code: str, board: chess.Board | None = None, size: int = DEFAULT_SIZE,
-                move: chess.Move | None = None) -> str:
-    """SVG explaining an error; draws the position (with offending squares) when one is given."""
+                move: chess.Move | None = None, uncertain: list[int] = ()) -> str:
+    """SVG explaining an error; draws the position (offending squares red, squares the
+    recognizer was unsure about amber) when one is given."""
     code = code if code in ERRORS else "error"
     title, detail = ERRORS[code]
     big, small = round(size * 0.055), round(size * 0.036)
@@ -177,7 +180,9 @@ def error_image(code: str, board: chess.Board | None = None, size: int = DEFAULT
         if code == "illegal_move" and move is not None:
             bad = [move.from_square, move.to_square]
         lines = [(title, big, "bold", "#b3261e")] + [(t, small, "normal", "#1d1d1f") for t in _wrap(detail, 52)]
-        return _page(size, _board_svg(board, size, bad=bad), lines, size)
+        if uncertain:
+            lines.append(("Amber squares were hard to read: check them first.", small, "normal", "#8a5a00"))
+        return _page(size, _board_svg(board, size, bad=bad, unsure=uncertain), lines, size)
 
     # No board: a simple warning mark above the message.
     r = size * 0.11

@@ -167,7 +167,11 @@ drops small blobs such as coordinate labels, and fills holes to get the piece
 silhouette. The silhouette is matched against piece templates scaled to the same size,
 and the piece's colour is decided relative to the other pieces on the board. Templates
 come from a built-in profile rendered from python-chess's pieces, plus any profiles in
-`PROFILES_DIR`.
+`PROFILES_DIR`. If the result isn't a legal position, a rule-based repair
+(`app/vision/repair.py`) makes the cheapest changes, based on each square's match
+probabilities, that give one king per side (not adjacent), no pawns on ranks 1 or 8, and
+at most 8 pawns per side. Repaired and low-confidence squares come back in `uncertain`,
+and they're shaded amber on the correction board and in error images.
 
 **Photos** (`app/vision/recognizer.py`). This is the pretrained model:
 

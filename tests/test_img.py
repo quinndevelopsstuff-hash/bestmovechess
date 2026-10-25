@@ -183,3 +183,21 @@ def test_img_out_on_error_without_board(client, monkeypatch):
 def test_img_out_bad_value(client):
     r = post(client, {"turn": "w", "img_out": "maybe"})
     assert r.status_code == 422 and "img_out" in r.json()["detail"]
+
+
+def test_error_image_marks_uncertain_squares(client):
+    params = {"code": "missing_king", "fen": "8/8/8/8/8/8/8/K7 w - - 0 1", "uncertain": "e8,d8", "format": "svg"}
+    r = client.get("/img/error", params=params)
+    assert r.status_code == 200 and "#f5a524" in r.text and "hard to read" in r.text
+    r = client.get("/img/error", params={**params, "uncertain": "e9,<x>"})   # malformed: ignored
+    assert r.status_code == 200 and "#f5a524" not in r.text
+
+
+def test_img_out_error_url_carries_uncertain(client, monkeypatch):
+    from app.recognize import Recognition
+    rec = Recognition(placement="8/8/8/8/8/8/8/K7", confidence=0.2, squares={}, uncertain=["e8", "d8"],
+                      repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
+    monkeypatch.setattr("app.main.recognize", lambda image, source="auto": (rec, (8, 8)))
+    body = post(client, {"turn": "w", "img_out": "true"}).json()
+    q = parse_qs(urlparse(body["image_url"]).query)
+    assert q["code"] == ["missing_king"] and q["uncertain"] == ["e8,d8"]

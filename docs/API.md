@@ -119,7 +119,7 @@ It returns every field of `GET /move`, plus:
 | `squares`      | object | Model confidence for the piece chosen on each square. Values top out near 0.95, because the model was trained that way |
 | `uncertain`    | array  | Squares below 0.85, the ones most worth checking |
 | `alternatives` | object | For squares below 0.9: the model's top guesses, e.g. `{"f6": [["n", 0.74], ["b", 0.21]]}` |
-| `repairs`      | array  | Changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns` |
+| `repairs`      | array  | Changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns`, and for screenshots `kings_adjacent` |
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
@@ -163,9 +163,23 @@ There are two recognizers:
 With `auto` (the default), the screenshot recognizer runs when the image contains a clean
 axis-aligned board, where squares of one colour are practically identical. Otherwise the
 photo model runs. The response's `source` says which recognizer ran. In the screenshot
-recognizer, `squares` scores how well each square matched its template, `uncertain` lists
-squares below 0.6, and `alternatives` gives the next-best templates, e.g.
-`{"b8": [["r", 0.77], ["n", 0.76], ["p", 0.72]]}`.
+recognizer, `squares` scores how well each square matched its template, `alternatives`
+gives the next-best templates, e.g. `{"b8": [["r", 0.77], ["n", 0.76], ["p", 0.72]]}`, and
+`uncertain` lists the squares to check: those scoring below 0.6, plus any square changed by
+repair.
+
+**Repair (screenshots).** If the reading isn't a legal position, the screenshot
+recognizer makes the cheapest changes that fix it. Each square's matches are turned into
+probabilities for every possible reading, and the fixes with the least total
+improbability are chosen:
+
+- no pawns on ranks 1 or 8;
+- exactly one king per side, with the kings not adjacent (every placement of both kings
+  is tried);
+- at most 8 pawns per side.
+
+Each change is listed in `repairs`, and the square is added to `uncertain`. A board that's
+already legal is never changed.
 
 The screenshot recognizer works without setup for boards drawn with the standard
 "cburnett" pieces (lichess's default, also used by `/img`). Other piece sets, such as
@@ -249,7 +263,8 @@ An image with a short message explaining an error, for showing in place of a dia
 | Param    | Required | Default | Meaning |
 |----------|----------|---------|---------|
 | `code`   | no       | `error` | One of the codes below; anything else shows "Something went wrong" |
-| `fen`    | no       |         | The detected position. For position problems the board is drawn with the offending squares highlighted |
+| `fen`    | no       |         | The detected position. For position problems the board is drawn with the offending squares highlighted in red |
+| `uncertain` | no    |         | Comma-separated squares (e.g. `e8,d8`) to shade amber as hard to read. `image_url` from `POST /move` includes it |
 | `format` | no       | `png`   | `png` or `svg` |
 | `size`   | no       | `480`   | Image width, 160–1024 |
 

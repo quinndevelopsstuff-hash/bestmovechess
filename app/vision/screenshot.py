@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import math
+
 import cv2
 import numpy as np
 
@@ -314,6 +316,17 @@ class Guess:
     confidence: float
     alternatives: list[list]        # [[piece, score], ...] best first
     score: float = 1.0              # template match of the chosen piece (1 for empty squares)
+    probs: dict = None              # probability of every reading ("." and the 12 pieces), for repair
+
+
+# How sharply template scores turn into probabilities: a 0.04 lead in correlation makes a
+# piece type ~2.7x as likely. Chosen so a clear lead dominates but close calls stay open.
+SCORE_SHARPNESS = 25.0
+
+
+def _empty_prob(area: float) -> float:
+    """Probability a square is empty from its silhouette area (0.5 at EMPTY_AREA)."""
+    return float(1 / (1 + math.exp((area - EMPTY_AREA) / 0.006)))
 
 
 def colour_split(lums: list[float]) -> tuple[float, float, float] | None:
@@ -332,7 +345,9 @@ def colour_split(lums: list[float]) -> tuple[float, float, float] | None:
 
 def classify(sq: Square, profiles: list[Profile], split: tuple[float, float] | None = None) -> Guess:
     if sq.area < EMPTY_AREA:
-        return Guess(".", round(float(np.clip((0.04 - sq.area) / 0.03, 0, 1)), 3), [])
+        pe = _empty_prob(sq.area)
+        probs = {".": pe, **{p: (1 - pe) / 12 for p in PIECES}}
+        return Guess(".", round(float(np.clip((0.04 - sq.area) / 0.03, 0, 1)), 3), [], 1.0, probs)
     # Piece type from the silhouette (both colours share a shape), best over all profiles.
     scores = {t: -1.0 for t in TYPES}
     best_profile, best_score = profiles[0], -1.0
@@ -363,7 +378,17 @@ def classify(sq: Square, profiles: list[Profile], split: tuple[float, float] | N
     c_type = np.clip((s1 - 0.5) / 0.35, 0, 1) * np.clip(lead / 0.5, 0, 1)
     case = str.upper if white else str.lower
     alts = [[case(t), round(scores[t], 3)] for t in ranked[:3]]
-    return Guess(case(ranked[0]), round(float(c_type * c_color), 3), alts, s1)
+    # Probabilities for repair: empty from the area, type from the template scores,
+    # colour from how decisive the brightness comparison was.
+    pe = _empty_prob(sq.area)
+    weights = {t: math.exp(SCORE_SHARPNESS * (scores[t] - s1)) for t in TYPES}
+    total = sum(weights.values())
+    p_white = float(np.clip(0.5 + 0.5 * c_color if white else 0.5 - 0.5 * c_color, 0.02, 0.98))
+    probs = {".": pe}
+    for t in TYPES:
+        probs[t.upper()] = (1 - pe) * weights[t] / total * p_white
+        probs[t] = (1 - pe) * weights[t] / total * (1 - p_white)
+    return Guess(case(ranked[0]), round(float(c_type * c_color), 3), alts, s1, probs)
 
 
 SQUARE_NAMES = [f"{f}{r}" for r in range(8, 0, -1) for f in "abcdefgh"]   # screen order, white at the bottom
@@ -373,6 +398,7 @@ UNCERTAIN_BELOW = 0.6
 def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
     """Recognition (same shape as the camera pipeline's) for a located screenshot board."""
     from .recognizer import Recognition, board_to_fen
+    from .repair import repair
 
     cells = squares(img, grid)
     split = colour_split([sq.lum for sq in cells if sq.area >= EMPTY_AREA])
@@ -385,14 +411,20 @@ def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
         if best is None or fit > best[0]:
             best = (fit, prof, guesses)
     _, chosen, guesses = best
-    board = [[guesses[r * 8 + c].piece for c in range(8)] for r in range(8)]
+    # Make the position legal with the cheapest changes (see repair.py).
+    readings, repairs = repair([g.probs for g in guesses])
+    board = [readings[r * 8: r * 8 + 8] for r in range(8)]
     conf = {name: g.confidence for name, g in zip(SQUARE_NAMES, guesses)}
+    changed = {fix["square"] for fix in repairs}
+    for i, name in enumerate(SQUARE_NAMES):
+        if name in changed:   # a repaired square is only as sure as its new reading
+            conf[name] = round(min(conf[name], guesses[i].probs[readings[i]]), 3)
     return Recognition(
         placement=board_to_fen(board),
         confidence=round(min(conf.values()), 3),
         squares=conf,
-        uncertain=[name for name, c in conf.items() if c < UNCERTAIN_BELOW],
-        repairs=[],
+        uncertain=[name for name, c in conf.items() if c < UNCERTAIN_BELOW or name in changed],
+        repairs=repairs,
         alternatives={name: g.alternatives for name, g in zip(SQUARE_NAMES, guesses) if g.confidence < 0.9 and g.alternatives},
         corners=[[round(x, 1), round(y, 1)] for x, y in grid.corners],
         source="screenshot",

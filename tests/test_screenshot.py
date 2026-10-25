@@ -90,3 +90,22 @@ def test_empty_and_labelled_squares():
 
 def test_no_board_in_blank_screenshot():
     assert ss.locate_board(np.full((1600, 740, 3), 40, np.uint8)) is None
+
+
+def test_repair_restores_a_misread_king(monkeypatch):
+    """Make the classifier prefer 'queen' on the black king's square; repair should put the
+    king back (the board would otherwise have no black king) and flag the square."""
+    board = chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1")
+    real = ss.classify
+
+    def unsure_king(sq, profiles, split=None):
+        g = real(sq, profiles, split)
+        if g.piece == "k":
+            g.piece, g.confidence = "q", 0.3
+            g.probs = {**g.probs, "q": 0.55, "k": 0.4}
+        return g
+    monkeypatch.setattr(ss, "classify", unsure_king)
+    rec, _ = recognize(png(phone_screenshot(board, 600)), "screenshot")
+    assert rec.placement == "4k3/8/8/8/8/8/8/R3K3"
+    assert rec.repairs == [{"square": "e8", "from": "q", "to": "k", "reason": "missing_king"}]
+    assert "e8" in rec.uncertain

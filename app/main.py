@@ -360,6 +360,8 @@ def error_image_url(request: Request, exc: APIError) -> str:
                 found = None
             if found:
                 params["code"] = found[0]
+        if exc.extra.get("uncertain"):
+            params["uncertain"] = ",".join(exc.extra["uncertain"])
     return f"{public_base_url(request)}/img/error?{urlencode(params)}"
 
 
@@ -436,9 +438,13 @@ async def board_image(fen: str = "", best: str = "", turn: str = "", format: str
     return await _image_response(svg, fmt)
 
 
+_SQUARES_RE = re.compile(r"^[a-h][1-8](,[a-h][1-8]){0,63}$")
+
+
 @app.get("/img/error")
-async def error_image(code: str = "error", fen: str = "", format: str = "png", size: str = ""):
-    """An image explaining an error code; draws the position too when it's a position problem."""
+async def error_image(code: str = "error", fen: str = "", format: str = "png", size: str = "", uncertain: str = ""):
+    """An image explaining an error code; draws the position too when it's a position problem,
+    with `uncertain` squares (comma-separated, e.g. e4,f6) shaded amber."""
     fmt = format if format in ("png", "svg") else "png"
     try:
         px = _size(size)
@@ -450,7 +456,8 @@ async def error_image(code: str = "error", fen: str = "", format: str = "png", s
             board = chess.Board(fen.strip())
         except ValueError:
             board = None   # can't draw it; the message alone still explains the error
-    return await _image_response(render.error_image(code, board, px), fmt)
+    unsure = [chess.parse_square(sq) for sq in uncertain.split(",")] if _SQUARES_RE.match(uncertain) else []
+    return await _image_response(render.error_image(code, board, px, uncertain=unsure), fmt)
 
 
 if STATIC_DIR.is_dir():

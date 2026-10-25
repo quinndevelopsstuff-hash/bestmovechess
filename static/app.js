@@ -276,7 +276,11 @@ async function getMove() {
     setStatus("");
   } catch (err) {
     setStatus(err.detail || "Something went wrong.", true);
-    if (err.error) showErrorImage(`img/error?${new URLSearchParams({ code: err.error, fen })}`);
+    if (err.error) {
+      const params = { code: err.error, fen };
+      if (state.uncertain.size) params.uncertain = [...state.uncertain].join(",");
+      showErrorImage(`img/error?${new URLSearchParams(params)}`);
+    }
   } finally {
     setBusy(false);
   }

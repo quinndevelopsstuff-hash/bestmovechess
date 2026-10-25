@@ -95,14 +95,14 @@ def recognizer(source: str):
     Returns (placement or None if no board, pipeline actually used)."""
     from .recognize import BoardNotFound, RecognitionUnavailable, recognize
 
-    def run(data: bytes) -> tuple[str | None, str]:
+    def run(data: bytes) -> tuple[str | None, str, list[str]]:
         try:
             rec, _ = recognize(data, source)
         except BoardNotFound:
-            return None, source
+            return None, source, []
         except RecognitionUnavailable as exc:
             sys.exit(f"error: {exc}")
-        return rec.placement, rec.source
+        return rec.placement, rec.source, rec.uncertain
     return run
 
 
@@ -126,15 +126,20 @@ def main(argv: list[str] | None = None) -> int:
 
     run = recognizer(args.source)
     pairs: Counter = Counter()
+    flagged: Counter = Counter()
     right_total = boards_right = 0
     print(f"recognizer: {args.source}   fixtures: {len(fixtures)}\n")
     for name, path, expected in fixtures:
-        predicted, used = run(path.read_bytes())
+        predicted, used, uncertain = run(path.read_bytes())
         result = compare(expected, predicted)
         right = sum(t == p for _, t, p in result)
         right_total += right
         boards_right += right == 64
         pairs.update((t, p) for _, t, p in result)
+        wrong_squares = {sq for sq, t, p in result if t != p}
+        flagged["wrong"] += len(wrong_squares)
+        flagged["wrong_flagged"] += len(wrong_squares & set(uncertain))
+        flagged["right_flagged"] += len(set(uncertain) - wrong_squares)
         pieces = [(t, p) for _, t, p in result if t != "."]
         piece_right = sum(t == p for t, p in pieces)
         status = "board not found" if predicted is None else f"{used}: {predicted}"
@@ -147,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     n = len(fixtures)
     print(f"\nsquares correct: {right_total}/{64 * n} ({right_total / (64 * n):.1%})"
           f"   boards fully correct: {boards_right}/{n}")
+    print(f"uncertain flags: {flagged['wrong_flagged']}/{flagged['wrong']} wrong squares flagged, "
+          f"{flagged['right_flagged']} correct squares flagged")
     print("\naccuracy by piece type:\n" + by_piece_type(pairs))
     print("\nconfusion (rows = expected, columns = predicted):\n" + confusion_table(pairs))
     return 0
