@@ -43,6 +43,32 @@ class ScreenshotFailed(Exception):
         self.reason = reason
 
 
+def remove_check_badges(rgb: np.ndarray) -> np.ndarray:
+    """chess.com puts a round red badge (check / mate) on the corner of the king's square.
+    chessfen takes it for part of the piece and can read the king as an empty square, so
+    any solid red disc is painted over with its surroundings first. The board itself has
+    no red. Returns the same array when there is nothing to remove, else a copy."""
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    red = (((hue <= 8) | (hue >= 172)) & (sat >= 150) & (val >= 170)).astype(np.uint8)
+    if not red.any():
+        return rgb
+    min_area = (max(rgb.shape[:2]) / 120) ** 2   # smaller specks aren't a badge
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(red, connectivity=8)
+    fill = np.zeros(red.shape, np.uint8)
+    for i in range(1, count):
+        if stats[i, cv2.CC_STAT_AREA] < min_area:
+            continue
+        ys, xs = np.nonzero(labels == i)
+        (cx, cy), radius = cv2.minEnclosingCircle(np.column_stack([xs, ys]).astype(np.float32))
+        if stats[i, cv2.CC_STAT_AREA] < 0.45 * np.pi * radius ** 2:   # a ring or blob, not a disc with an icon in it
+            continue
+        cv2.circle(fill, (int(cx), int(cy)), int(radius) + 3, 1, -1)
+    if not fill.any():
+        return rgb
+    return cv2.cvtColor(cv2.inpaint(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), fill, 5, cv2.INPAINT_TELEA), cv2.COLOR_BGR2RGB)
+
+
 def square_confidence(verdict) -> float:
     """0-1 confidence for one chessfen square verdict, scaled so that 0.6 is exactly
     chessfen's own line between confident and doubtful (each of shape match, lead over
@@ -120,7 +146,7 @@ def recognize(img: np.ndarray, flip: bool | None = None, grid: Grid | None = Non
     UnknownProfile for a name that doesn't exist."""
     if chessfen is None:
         raise ScreenshotFailed("screenshot recognition needs chessfen, which needs Python 3.13+")
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    rgb = remove_check_badges(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     orientation = (chessfen.Orientation.AUTO if flip is None
                    else chessfen.Orientation.BLACK if flip else chessfen.Orientation.WHITE)
 

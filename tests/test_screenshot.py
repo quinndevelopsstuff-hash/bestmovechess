@@ -192,3 +192,37 @@ def test_square_confidence_matches_chessfen_doubt():
     assert sure.confident and ss.square_confidence(sure) >= 0.6
     assert not shaky.confident and ss.square_confidence(shaky) < 0.6
     assert ss.square_confidence(SquareVerdict(piece=None, score=0.0, margin=1.0, color_margin=1.0)) == 1.0
+
+
+def _red_badge(img, cx, cy, r):
+    out = img.copy()
+    cv2.circle(out, (cx, cy), r, (45, 65, 250), -1)                       # chess.com's red check badge (BGR)
+    cv2.rectangle(out, (cx - r // 2, cy - 2), (cx + r // 2, cy + 2), (255, 255, 255), -1)   # white icon inside
+    return out
+
+
+def test_check_badge_is_painted_over_and_the_board_still_reads():
+    board, last = random_position(21)
+    img = phone_screenshot(board, 640, last)
+    left, top = (img.shape[1] - 640) // 2, int(img.shape[0] * 0.3)
+    sq = 640 // 8
+    king = board.king(chess.BLACK)
+    cx = left + (chess.square_file(king) + 1) * sq - 4          # top-right corner of the king's square
+    cy = top + (7 - chess.square_rank(king)) * sq + 4
+    badged = _red_badge(img, cx, cy, 22)
+    cleaned = ss.remove_check_badges(np.ascontiguousarray(badged[:, :, ::-1]))
+    assert abs(int(cleaned[cy, cx - 12, 0]) - 250) > 60 or cleaned[cy, cx - 12, 1] > 100   # no longer solid red
+    rec, _ = recognize(png(badged), "screenshot")
+    assert rec.placement == board.board_fen()
+
+
+def test_no_red_means_no_copy():
+    rgb = np.ascontiguousarray(phone_screenshot(chess.Board(), 640)[:, :, ::-1])
+    assert ss.remove_check_badges(rgb) is rgb
+
+
+def test_a_red_ring_is_not_mistaken_for_a_badge():
+    img = phone_screenshot(chess.Board(), 640)
+    cv2.circle(img, (80, 80), 40, (45, 65, 250), 4)   # outline only
+    rgb = np.ascontiguousarray(img[:, :, ::-1])
+    assert ss.remove_check_badges(rgb) is rgb
