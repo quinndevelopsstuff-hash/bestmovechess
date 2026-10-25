@@ -1,0 +1,33 @@
+# systemd unit for bestmovechess.
+# Assumes the repo is at /opt/bestmovechess with a virtualenv in /opt/bestmovechess/.venv
+# (see README). Override settings in /etc/bestmovechess.env (optional).
+[Unit]
+Description=bestmovechess - chess next-best-move web app
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bestmovechess
+Environment=HOST=127.0.0.1
+Environment=PORT=8000
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/bestmovechess.env
+ExecStart=/opt/bestmovechess/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT} --no-access-log
+Restart=on-failure
+RestartSec=3
+
+# Run as a throwaway unprivileged user with a read-only view of the system.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
