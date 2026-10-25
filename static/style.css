@@ -83,7 +83,12 @@ details[open] > summary { margin-bottom: 8px; }
 .camera { margin-top: 12px; }
 .camera video { width: 100%; border-radius: 10px; background: #000; display: block; margin-bottom: 8px; }
 .preview { margin: 12px 0 0; }
-.preview img { max-width: 100%; max-height: 320px; border-radius: 10px; display: block; margin: 0 auto; }
+.preview-wrap { position: relative; width: fit-content; margin: 0 auto; }
+.preview img { max-width: 100%; max-height: 320px; border-radius: 10px; display: block; }
+.overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.overlay polygon { fill: rgba(47, 111, 79, 0.15); stroke: #3ddc84; stroke-width: 2.5px; vector-effect: non-scaling-stroke; }
+.overlay circle { fill: #3ddc84; stroke: #000; }
+.overlay text { fill: #fff; stroke: #000; stroke-width: 3px; paint-order: stroke; font-weight: 700; }
 
 .status { min-height: 1.4em; margin: 0 4px 12px; color: var(--muted); }
 .status.error { color: var(--error); }
@@ -100,6 +105,7 @@ details[open] > summary { margin-bottom: 8px; }
 #board .light { fill: var(--sq-light); }
 #board .dark { fill: var(--sq-dark); }
 #board .hl { fill: var(--hl); }
+#board .unsure { fill: none; stroke: #e5484d; stroke-width: 6; stroke-dasharray: 14 8; }
 #board .coord { font: 600 20px system-ui, sans-serif; }
 #board .piece { font: 76px "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", "Apple Symbols", serif; stroke-width: 2.5; paint-order: stroke; }
 #board .piece.w { fill: #fff; stroke: #222; }

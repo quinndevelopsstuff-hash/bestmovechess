@@ -29,5 +29,11 @@ DEFAULT_DEPTH = _int("DEFAULT_DEPTH", 15)
 MAX_DEPTH = _int("MAX_DEPTH", 25)
 # Hard wall-clock cap per search so a deep request can't tie up a small board forever.
 ENGINE_MAX_SECONDS = _float("ENGINE_MAX_SECONDS", 10.0)
+MODEL_PATH = os.environ.get(
+    "MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "square_cnn.onnx"),
+)
+VISION_THREADS = _int("VISION_THREADS", 2)
+MAX_IMAGE_PIXELS = _int("MAX_IMAGE_PIXELS", 50_000_000)
 MAX_UPLOAD_BYTES = _int("MAX_UPLOAD_MB", 10) * 1024 * 1024
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()

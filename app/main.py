@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config
 from .engine import Engine, EngineUnavailable
-from .recognize import RecognitionUnavailable, recognize
+from .recognize import BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
 from .upload import UploadError, read_form
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -195,14 +195,26 @@ async def post_move(request: Request):
         raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
 
     try:
-        placement, confidence = await run_in_threadpool(recognize, image)
+        rec, (width, height) = await run_in_threadpool(recognize, image)
     except RecognitionUnavailable as exc:
         raise APIError(501, "recognition_unavailable", str(exc)) from None
+    except InvalidImage as exc:
+        raise APIError(415, "invalid_image", str(exc)) from None
+    except BoardNotFound as exc:
+        raise APIError(422, "board_not_found", f"{exc}; fill the frame with the board and avoid glare") from None
     finally:
         del image
 
-    fen = f"{placement} {turn} {castling} {ep_square} 0 1"
-    extra = {"detected": placement, "confidence": round(confidence, 3)}
+    fen = f"{rec.placement} {turn} {castling} {ep_square} 0 1"
+    extra = {
+        "detected": rec.placement,
+        "confidence": rec.confidence,
+        "squares": rec.squares,
+        "uncertain": rec.uncertain,
+        "repairs": rec.repairs,
+        "corners": rec.corners,
+        "image_size": [width, height],
+    }
     return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
 
 

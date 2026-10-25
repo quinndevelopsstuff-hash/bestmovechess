@@ -6,8 +6,9 @@ the best move.
 
 Runs well on a Raspberry Pi 5, and on any Linux/macOS machine or in Docker.
 
-> **Status:** FEN API and web page work. Photo recognition is in progress, so photo
-> uploads currently return `501 recognition_unavailable`.
+Photo recognition finds the board, corrects for perspective, and classifies each
+square with a small pretrained CNN running on ONNX Runtime. It takes about a second
+per photo and needs no GPU. See [How recognition works](#how-recognition-works).
 
 ## Web page
 
@@ -49,9 +50,20 @@ in the browser before upload, which also strips EXIF data such as location.
 | `ep`       | no       | En passant file `a`-`h` if the last move was a double pawn push |
 | `depth`    | no       | As for `GET`                                                    |
 
-Returns the same fields as `GET /move`, plus `detected` (the recognised piece
-placement) and `confidence` (0-1). If the recognised position is illegal, the 422
-error also includes `fen`, `detected` and `confidence` so the page can show it.
+Returns the same fields as `GET /move`, plus:
+
+| Field        | Meaning                                                                  |
+|--------------|--------------------------------------------------------------------------|
+| `detected`   | Recognised piece placement (first FEN field)                             |
+| `confidence` | 0-1 estimate that the whole board is right (see below)                   |
+| `squares`    | Per-square model confidence, e.g. `{"e4": 0.95, ...}`                    |
+| `uncertain`  | Squares the model is unsure about                                        |
+| `repairs`    | Squares changed to make the position legal (e.g. a second white king)    |
+| `corners`    | Image pixels of the board's a8, h8, h1, a1 corners                       |
+| `image_size` | `[width, height]` those coordinates refer to                             |
+
+If the recognised position is illegal, the 422 error still includes `fen` and the
+fields above, so the page can show what was detected.
 
 ```sh
 curl -F image=@board.jpg -F turn=w http://127.0.0.1:8000/move
@@ -67,9 +79,11 @@ Errors are always JSON: `{"error": "<code>", "detail": "<message>"}`.
 | 422    | `illegal_position`   | Parses, but isn't a legal position (e.g. no king) |
 | 422    | `game_over`          | Checkmate or stalemate, so there's no move        |
 | 422    | `invalid_request`    | Missing or out-of-range parameter                 |
+| 422    | `board_not_found`    | No chessboard found in the photo                  |
 | 413    | `too_large`          | Upload bigger than `MAX_UPLOAD_MB`                |
 | 415    | `unsupported_media_type` | `POST` body isn't `multipart/form-data`       |
-| 501    | `recognition_unavailable` | Photo recognition isn't available           |
+| 415    | `invalid_image`      | The upload isn't a JPEG/PNG/WebP image            |
+| 501    | `recognition_unavailable` | Model file missing (run the download script) |
 | 503    | `engine_unavailable` | Stockfish isn't installed or crashed              |
 
 `GET /healthz` returns `{"ok": true}`.
@@ -86,6 +100,7 @@ sudo git clone https://github.com/<you>/bestmovechess.git /opt/bestmovechess
 cd /opt/bestmovechess
 sudo python3 -m venv .venv
 sudo .venv/bin/pip install -r requirements.txt
+sudo .venv/bin/python scripts/download_model.py   # 3.4 MB, checksum-verified
 
 # Optional: change settings
 sudo cp deploy/bestmovechess.env.example /etc/bestmovechess.env
@@ -112,6 +127,7 @@ and set `STOCKFISH_PATH`), then:
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/download_model.py
 .venv/bin/uvicorn app.main:app --port 8000 --no-access-log
 ```
 
@@ -125,7 +141,7 @@ docker run -d --name bestmovechess --restart unless-stopped -p 127.0.0.1:8000:80
 ```
 
 Pass settings with `-e`, e.g. `-e ENGINE_THREADS=4`. The image builds on both
-amd64 and arm64.
+amd64 and arm64, and downloads the model during the build.
 
 ### Configuration
 
@@ -141,7 +157,50 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `MAX_DEPTH`          | `25`                        | Highest depth a request may ask for      |
 | `ENGINE_MAX_SECONDS` | `10`                        | Wall-clock cap per search                |
 | `MAX_UPLOAD_MB`      | `10`                        | Upload size limit                        |
+| `MODEL_PATH`         | `models/square_cnn.onnx`    | Recognition model file                   |
+| `VISION_THREADS`     | `2`                         | ONNX Runtime threads                     |
+| `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
+
+## How recognition works
+
+`app/vision/` runs on the uploaded bytes in memory:
+
+1. **Board detection.** It finds the "X-corners" where four squares meet and fits
+   them to an 8×8 grid with RANSAC. That gives a perspective homography, so photos
+   taken at an angle work. If that fails, it falls back to quadrilateral contours.
+2. **Square crops.** It cuts an upright 32×64 crop for each square, tall enough to
+   include the piece.
+3. **Classification.** A 0.84M-parameter CNN (ONNX) labels each crop as empty or one
+   of the 12 pieces.
+4. **Orientation.** h1 is a light square, and White is assumed to be nearer the
+   camera.
+5. **Legality repair.** Using the model's probabilities, it makes the cheapest
+   changes that give one king per side, no pawns on the back ranks, and at most 8
+   pawns per side. Any change is reported in `repairs`.
+
+On 104 real photos the model was not trained on (the held-out part of
+[samryan18/chess-dataset](https://github.com/samryan18/chess-dataset)), it got 99.3%
+of squares and 92% of whole boards right. Every board scoring `confidence` ≥ 0.8 was
+fully correct, 92% of those between 0.5 and 0.8 were, and 56% of those below 0.5 were.
+The thresholds were tuned on those same photos, so treat them as a guide. Accuracy is
+lower with unusual piece sets, steep angles, glare, or a board rotated diagonally in
+the frame. **Always check the detected position before trusting the move.**
+
+Tips: shoot from above or from White's side, fill most of the frame with the board,
+and avoid strong reflections.
+
+### Credits
+
+- Recognition model and the detection/cropping code in `app/vision/`:
+  [ChessLens](https://github.com/zeljko1611/ChessLens) by zeljko1611, MIT License
+  (see `app/vision/LICENSE`). The model file is downloaded from a pinned commit and
+  checked against its SHA-256.
+- ChessLens was trained on renders from [chesscog](https://osf.io/xf3ka/) (Wölflein &
+  Arandjelović, CC BY 4.0) and photos from
+  [samryan18/chess-dataset](https://github.com/samryan18/chess-dataset) (MIT).
+- [Stockfish](https://stockfishchess.org/) (GPLv3) is installed separately and run as
+  a separate program.
 
 ## Optional: private access with Tailscale
 
@@ -162,7 +221,9 @@ off: `tailscale serve reset`.
 
 Uploaded images are processed in memory only and never stored. The upload is parsed
 in memory rather than with the framework's default parser, which would write large
-files to a temporary file on disk. Image bytes are never logged.
+files to a temporary file on disk. The image is decoded with OpenCV straight from
+memory, and nothing in the recognition pipeline writes files. Image bytes are never
+logged. The tests fail if an upload ever touches a temporary file.
 
 Logs contain only the request method, path, status code, and timing. Query strings
 and request bodies are never logged (uvicorn's own access log is disabled with

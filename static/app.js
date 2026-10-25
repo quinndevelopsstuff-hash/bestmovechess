@@ -17,13 +17,14 @@ const els = {
   status: $("status"), result: $("result"),
   bestMove: $("best-move"), bestUci: $("best-uci"), evalEl: $("eval"), confidence: $("confidence"),
   board: $("board"), flip: $("flip-btn"), copyFen: $("copy-fen"), fenOut: $("fen-out"),
+  overlay: $("overlay"), repairs: $("repairs"),
 };
 
 let photo = null;        // Blob ready to upload (kept only in memory)
 let previewUrl = null;
 let stream = null;
 let flipped = false;
-let shown = null;        // {fen, best} currently drawn
+let shown = null;        // {fen, best, uncertain} currently drawn
 
 // ---------- status ----------
 
@@ -64,6 +65,7 @@ async function setPhoto(source) {
   photo = blob;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(blob);
+  els.overlay.replaceChildren();
   els.previewImg.src = previewUrl;
   els.preview.hidden = false;
   els.go.disabled = false;
@@ -75,6 +77,7 @@ function clearPhoto() {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
   els.previewImg.removeAttribute("src");
+  els.overlay.replaceChildren();
   els.preview.hidden = true;
   els.go.disabled = true;
 }
@@ -203,16 +206,27 @@ function showResult(r) {
   if (r.confidence != null) {
     const pct = Math.round(r.confidence * 100);
     const low = r.confidence < LOW_CONFIDENCE;
-    els.confidence.textContent = `Recognition confidence: ${pct}%` +
-      (low ? ". Check the board below against your photo." : ". Check the board below matches your photo.");
+    const unsure = (r.uncertain || []).length;
+    els.confidence.textContent = `Recognition confidence: ${pct}%. ` +
+      (low ? "Likely mistakes: compare the board below with your photo carefully." : "Check the board below matches your photo.") +
+      (unsure ? ` Dashed squares (${unsure}) are the least certain.` : "");
     els.confidence.classList.toggle("low", low);
     els.confidence.hidden = false;
   } else {
     els.confidence.hidden = true;
   }
+  const names = { pawn_on_back_rank: "no pawns on the back rank", extra_king: "only one king per side",
+    missing_king: "each side needs a king", too_many_pawns: "at most 8 pawns per side" };
+  const repairs = r.repairs || [];
+  els.repairs.textContent = repairs.length
+    ? "Adjusted to make the position legal: " +
+      repairs.map((x) => `${x.square} ${x.from}→${x.to} (${names[x.reason] || x.reason})`).join(", ") + "."
+    : "";
+  els.repairs.hidden = !repairs.length;
+  drawOverlay(r.corners, r.image_size);
   els.fenOut.textContent = r.fen;
   flipped = r.fen.split(" ")[1] === "b";
-  shown = { fen: r.fen, best: r.best };
+  shown = { fen: r.fen, best: r.best, uncertain: r.uncertain || [] };
   drawBoard();
   els.result.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -291,7 +305,27 @@ function drawBoard() {
         GLYPH[p.toLowerCase()] + "︎"));
     }
   }
+  for (const name of shown.uncertain) {
+    const [x, y] = pos(...squareOf(name));
+    g.append(svg("rect", { x: x + 5, y: y + 5, width: SQ - 10, height: SQ - 10, rx: 8, class: "unsure" }));
+  }
   if (move.length) drawArrow(g, move[0], move[1]);
+}
+
+// Outline where the board was found in the photo, with its a8 and h1 corners labelled.
+function drawOverlay(corners, size) {
+  const o = els.overlay;
+  o.replaceChildren();
+  if (!corners || !size || els.preview.hidden) return;
+  o.setAttribute("viewBox", `0 0 ${size[0]} ${size[1]}`);
+  o.setAttribute("preserveAspectRatio", "none");
+  o.append(svg("polygon", { points: corners.map((p) => p.join(",")).join(" ") }));
+  const r = Math.max(size[0], size[1]) / 120;
+  for (const [i, label] of [[0, "a8"], [2, "h1"]]) {
+    const [x, y] = corners[i];
+    o.append(svg("circle", { cx: x, cy: y, r }));
+    o.append(svg("text", { x: x + r * 1.5, y: y - r * 1.5, "font-size": r * 4 }, label));
+  }
 }
 
 function drawArrow(g, from, to) {

@@ -11,6 +11,8 @@ ENV STOCKFISH_PATH=/usr/games/stockfish \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY scripts ./scripts
+RUN python scripts/download_model.py
 COPY app ./app
 COPY static ./static
 

@@ -71,8 +71,12 @@ IMAGE = b"\xff\xd8\xff\xe0fake-jpeg-bytes-SECRET"
 
 @pytest.fixture
 def fake_recognizer(monkeypatch):
+    from app.recognize import Recognition
+
     def use(placement, confidence=0.9):
-        monkeypatch.setattr("app.main.recognize", lambda image: (placement, confidence))
+        rec = Recognition(placement=placement, confidence=confidence, squares={}, uncertain=[],
+                          repairs=[], corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
+        monkeypatch.setattr("app.main.recognize", lambda image: (rec, (8, 8)))
     return use
 
 
@@ -94,7 +98,9 @@ def post(client, data=None, image=IMAGE):
     return client.post("/move", data={"turn": "w"} if data is None else data, files=files)
 
 
-def test_post_without_recognizer(client, no_disk):
+def test_post_without_model(client, no_disk, monkeypatch):
+    monkeypatch.setattr("app.config.MODEL_PATH", "/nonexistent/model.onnx")
+    monkeypatch.setattr("app.recognize._recognizer", None)
     r = post(client)
     assert r.status_code == 501
     assert r.json()["error"] == "recognition_unavailable"
@@ -166,3 +172,38 @@ def test_post_not_multipart(client):
 def test_frontend_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "Best Move" in r.text
+
+
+@needs_engine
+@pytest.mark.skipif(not __import__("os").path.isfile(config.MODEL_PATH), reason="model not downloaded")
+def test_post_real_photo(client, no_disk):
+    from pathlib import Path
+
+    data = Path(__file__).parent / "data"
+    r = post(client, {"turn": "w", "depth": "6"}, image=(data / "board.jpg").read_bytes())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["detected"] == (data / "board.fen").read_text().strip()
+    assert body["best"] and body["confidence"] >= 0.8
+
+
+def test_post_garbage_image(client, no_disk):
+    import os
+    if not os.path.isfile(config.MODEL_PATH):
+        pytest.skip("model not downloaded")
+    r = post(client)
+    assert r.status_code == 415
+    assert r.json()["error"] == "invalid_image"
+
+
+def test_post_no_board_in_photo(client, no_disk):
+    import os
+
+    import cv2
+    import numpy as np
+    if not os.path.isfile(config.MODEL_PATH):
+        pytest.skip("model not downloaded")
+    blank = cv2.imencode(".png", np.full((300, 400, 3), 128, np.uint8))[1].tobytes()
+    r = post(client, image=blank)
+    assert r.status_code == 422
+    assert r.json()["error"] == "board_not_found"

@@ -5,3 +5,4 @@ tests
 deploy
 **/__pycache__
 *.md
+models

@@ -32,7 +32,10 @@
     </div>
 
     <figure id="preview" class="preview" hidden>
-      <img id="preview-img" alt="Selected board photo">
+      <div class="preview-wrap">
+        <img id="preview-img" alt="Selected board photo">
+        <svg id="overlay" class="overlay" aria-hidden="true"></svg>
+      </div>
       <button type="button" id="clear-photo" class="link">Remove photo</button>
     </figure>
 
@@ -94,6 +97,7 @@
     </div>
     <div id="eval" class="eval"></div>
     <div id="confidence" class="confidence" hidden></div>
+    <p id="repairs" class="hint" hidden></p>
     <div class="board-wrap">
       <svg id="board" viewBox="0 0 800 800" role="img" aria-label="Chess board"></svg>
     </div>
