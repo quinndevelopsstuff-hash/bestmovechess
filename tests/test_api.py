@@ -76,7 +76,7 @@ def fake_recognizer(monkeypatch):
     def use(placement, confidence=0.9):
         rec = Recognition(placement=placement, confidence=confidence, squares={}, uncertain=[],
                           repairs=[], alternatives={}, corners=[[0, 0], [8, 0], [8, 8], [0, 8]])
-        monkeypatch.setattr("app.main.recognize", lambda image, source="auto": (rec, (8, 8)))
+        monkeypatch.setattr("app.main.recognize", lambda image, source="auto", flip=None: (rec, (8, 8)))
     return use
 
 
@@ -221,7 +221,7 @@ def test_post_game_over_returns_detection(client, fake_recognizer):
 def test_post_source_field(client, monkeypatch):
     seen = {}
 
-    def fake(image, source="auto"):
+    def fake(image, source="auto", flip=None):
         seen["source"] = source
         from app.recognize import BoardNotFound
         raise BoardNotFound("nope")
@@ -241,3 +241,18 @@ def test_post_screenshot_without_profiles(client, monkeypatch, no_disk):
     img = cv2.imencode(".png", cv2.cvtColor(checker, cv2.COLOR_GRAY2BGR))[1].tobytes()
     r = post(client, {"turn": "w", "source": "screenshot"}, image=img)
     assert r.status_code == 501 and r.json()["error"] == "recognition_unavailable"
+
+
+def test_post_flip_field(client, monkeypatch):
+    seen = {}
+
+    def fake(image, source="auto", flip=None):
+        seen["flip"] = flip
+        from app.recognize import BoardNotFound
+        raise BoardNotFound("nope")
+    monkeypatch.setattr("app.main.recognize", fake)
+    for value, expected in (("", None), ("auto", None), ("true", True), ("FALSE", False)):
+        post(client, {"turn": "w", "flip": value})
+        assert seen["flip"] is expected
+    r = post(client, {"turn": "w", "flip": "sideways"})
+    assert r.status_code == 422 and "flip" in r.json()["detail"]

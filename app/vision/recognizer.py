@@ -52,6 +52,8 @@ class Recognition:
     corners: list[list[float]]      # board corners a8, h8, h1, a1 in image pixels
     source: str = "camera"          # which pipeline produced it: "camera" or "screenshot"
     profile: str | None = None      # screenshot path: the template profile that matched best
+    flipped: bool = False           # screenshot path: board shown with Black at the bottom
+    orientation: str | None = None  # screenshot path: how that was decided (labels/pieces/default/requested)
 
 
 def square_name(r: int, c: int) -> str:

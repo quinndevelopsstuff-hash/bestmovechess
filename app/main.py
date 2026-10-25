@@ -186,6 +186,8 @@ _POST_MOVE_FORM = {
                 "depth": {"type": "integer", "minimum": 1, "maximum": config.MAX_DEPTH},
                 "source": {"type": "string", "enum": list(SOURCES), "default": "auto",
                            "description": "screenshot (flat digital board), camera (photo), or auto-detect"},
+                "flip": {"type": "string", "enum": ["auto", "true", "false"], "default": "auto",
+                         "description": "Screenshots: true if the board is shown with Black at the bottom"},
                 "img_out": {"type": "boolean", "default": False,
                             "description": "Also return image_url, a rendered diagram of the result"},
             },
@@ -235,6 +237,13 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
     source = fields.get("source", "").strip().lower() or "auto"
     if source not in SOURCES:
         raise APIError(422, "invalid_request", "source: must be auto, screenshot or camera")
+    flip_field = fields.get("flip", "").strip().lower()
+    if flip_field in ("", "auto"):
+        flip = None
+    elif flip_field in ("true", "1", "yes", "on", "false", "0", "no", "off"):
+        flip = flip_field in ("true", "1", "yes", "on")
+    else:
+        raise APIError(422, "invalid_request", "flip: must be auto, true or false")
     try:
         depth = int(fields.get("depth") or config.DEFAULT_DEPTH)
     except ValueError:
@@ -243,7 +252,7 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         raise APIError(422, "invalid_request", f"depth: must be between 1 and {config.MAX_DEPTH}")
 
     try:
-        rec, (width, height) = await run_in_threadpool(recognize, image, source)
+        rec, (width, height) = await run_in_threadpool(recognize, image, source, flip)
     except RecognitionUnavailable as exc:
         raise APIError(501, "recognition_unavailable", str(exc)) from None
     except InvalidImage as exc:
@@ -263,6 +272,8 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "image_size": [width, height],
         "source": rec.source,
         "profile": rec.profile,
+        "flipped": rec.flipped,
+        "orientation": rec.orientation,
     }
     return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
 

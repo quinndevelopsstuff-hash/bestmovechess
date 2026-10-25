@@ -1,5 +1,6 @@
 """Calibrate screenshot recognition for a piece set: cut the 12 pieces out of a screenshot
-of the starting position (White at the bottom) and save them as a named profile.
+of the starting position and save them as a named profile. The board may be shown from
+either side (White or Black at the bottom).
 
     python -m app.calibrate screenshot.png --name chesscom-neo
     python -m app.calibrate screenshot.png --name mine --fen <placement>   # any position with all 12 pieces
@@ -77,11 +78,20 @@ def calibrate(data: bytes, name: str, placement: str = START, replace: bool = Fa
         cells = squares(img, grid)
     finally:
         del img   # only the per-square silhouettes are kept from here on
-    verify(cells, placement)
+    flipped = False
+    try:
+        verify(cells, placement)
+    except CalibrationError as exc:
+        if exc.code != "flipped":
+            raise
+        # Shown from Black's side: the screen squares are the board rotated 180 degrees
+        # (pieces stay upright), so read them in reverse order.
+        cells, flipped = cells[::-1], True
+        verify(cells, placement)
     profile = profile_from_squares(name, cells, placement)
     profiles.save(profile, replace=replace, square_px=grid.size)
     return {"profile": name, "square_px": round(grid.size, 1), "screenshot": looks_like_screenshot(grid),
-            "profiles": profiles.saved_names()}
+            "flipped": flipped, "profiles": profiles.saved_names()}
 
 
 def default_name(path: Path) -> str:
@@ -90,7 +100,7 @@ def default_name(path: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("screenshot", nargs="?", type=Path, help="screenshot of the starting position, White at the bottom")
+    ap.add_argument("screenshot", nargs="?", type=Path, help="screenshot of the starting position")
     ap.add_argument("--name", help="profile name (default: from the file name)")
     ap.add_argument("--fen", default=START, help="piece placement shown, if not the starting position")
     ap.add_argument("--replace", action="store_true", help="overwrite an existing profile with this name")

@@ -23,8 +23,9 @@ PATHS = dict(re.findall(r"^\s+([kqrbnp]): \"([^\"]+)\"", (Path(__file__).parent.
 START = chess.STARTING_BOARD_FEN
 
 
-def noto_board(placement: str, square: int = 90, highlight=(), flipped=False) -> np.ndarray:
-    """A board in a blue theme with Noto pieces, inside a dark phone screen."""
+def noto_board(placement: str, square: int = 90, highlight=(), flipped=False, labels=False) -> np.ndarray:
+    """A board in a blue theme with Noto pieces, inside a dark phone screen. labels=True
+    draws chess.com-style coordinates inside the edge squares."""
     rows = []
     board = chess.BaseBoard(placement)
     for sq in chess.SQUARES:
@@ -42,6 +43,17 @@ def noto_board(placement: str, square: int = 90, highlight=(), flipped=False) ->
     size = 8 * square
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">{"".join(rows)}</svg>'
     rendered = cv2.imdecode(np.frombuffer(render.cairosvg.svg2png(bytestring=svg.encode()), np.uint8), cv2.IMREAD_COLOR)
+    if labels:
+        scale, thick = square / 160, max(1, square // 45)
+        for i in range(8):   # rank digits in the left column, file letters along the bottom row
+            rank = str(i + 1 if flipped else 8 - i)
+            colour = (98, 117, 128) if i % 2 == 0 else (230, 227, 222)
+            cv2.putText(rendered, rank, (int(square * 0.06), int(i * square + square * 0.28)),
+                        cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thick, cv2.LINE_AA)
+            letter = "hgfedcba"[i] if flipped else "abcdefgh"[i]
+            colour = (230, 227, 222) if i % 2 == 0 else (98, 117, 128)
+            cv2.putText(rendered, letter, (int((i + 1) * square - square * 0.25), int(8 * square - square * 0.08)),
+                        cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thick, cv2.LINE_AA)
     w = int(size / 0.95)
     screen = np.full((int(w * 2.1), w, 3), (40, 38, 36), np.uint8)
     top, left = int(screen.shape[0] * 0.28), (w - size) // 2
@@ -105,7 +117,6 @@ def test_profile_holds_only_small_templates(profile_dir):
 
 @pytest.mark.parametrize("make, code", [
     (lambda: noto_board("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR"), "wrong_position"),
-    (lambda: noto_board(START, flipped=True), "flipped"),
     (lambda: np.full((1500, 700, 3), 40, np.uint8), "board_not_found"),
 ])
 def test_rejects_bad_calibration_screenshots(profile_dir, make, code):
@@ -113,6 +124,14 @@ def test_rejects_bad_calibration_screenshots(profile_dir, make, code):
         calibrate.calibrate(png(make()), "x")
     assert err.value.code == code
     assert not list(profile_dir.iterdir())
+
+
+def test_calibrates_from_blacks_side(profile_dir):
+    result = calibrate.calibrate(png(noto_board(START, flipped=True)), "noto-flipped")
+    assert result["flipped"] is True
+    placement, highlight = random_position(9)
+    rec, _ = recognize(png(noto_board(placement, highlight=highlight)), "screenshot")
+    assert rec.profile == "noto-flipped" and rec.placement == placement
 
 
 def test_other_known_positions_can_calibrate(profile_dir):
@@ -142,13 +161,13 @@ def test_calibrate_endpoint(client, profile_dir, monkeypatch):
     assert r.status_code == 409 and r.json()["error"] == "profile_exists"
     assert post(client, "noto", start, replace="true").status_code == 200
     assert post(client, "../etc", start).json()["error"] == "invalid_request"
-    assert post(client, "x", png(noto_board(START, flipped=True))).json()["error"] == "flipped"
-    monkeypatch.setattr(config, "MAX_PROFILES", 1)
+    assert post(client, "x", png(noto_board(START, flipped=True))).json()["flipped"] is True
+    monkeypatch.setattr(config, "MAX_PROFILES", 2)
     r = post(client, "second", start)
     assert r.status_code == 422 and "MAX_PROFILES" in r.json()["detail"]
     monkeypatch.setattr(config, "CALIBRATION_ENABLED", False)
     assert post(client, "third", start).status_code == 403
-    assert sorted(p.name for p in profile_dir.iterdir()) == ["noto.npz"]
+    assert sorted(p.name for p in profile_dir.iterdir()) == ["noto.npz", "x.npz"]
 
 
 def test_calibrate_upload_stays_in_memory(client, profile_dir, monkeypatch):

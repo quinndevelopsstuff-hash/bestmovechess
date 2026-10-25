@@ -241,6 +241,8 @@ async function readPhoto() {
   form.append("ep", els.ep.value);
   form.append("depth", els.depth.value);
   form.append("source", els.source.value);
+  // Unticked means "detect it"; screenshots usually reveal their orientation.
+  form.append("flip", $("flip").checked ? "true" : "auto");
   if (els.showDiagram.checked) form.append("img_out", "true");
   setBusy(true);
   setStatus("Reading the board…");
@@ -329,6 +331,8 @@ function loadPosition(placement, extras = {}) {
 
 function loadDetection(r) {
   loadPosition(r.detected, r);
+  // Show the board the way the screenshot showed it (Black at the bottom if flipped).
+  if (r.flipped) state.flipped = true;
   // A 200 response already carries the best move for exactly this position.
   if (r.best) state.answers.set(r.fen, r);
   showConfidence(r);
@@ -339,13 +343,22 @@ function loadDetection(r) {
   els.result.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function orientationNote(r) {
+  if (r.source !== "screenshot") return "";
+  const how = { labels: "from the board's coordinates", pieces: "from where the pieces stand" }[r.orientation];
+  if (r.flipped) return ` Read with Black at the bottom${how ? ` (${how})` : ""}.`;
+  if (r.orientation === "default") return " If the board was shown from Black's side, tick that option and read it again.";
+  return "";
+}
+
 function showConfidence(r) {
   const pct = Math.round(r.confidence * 100);
   const low = r.confidence < LOW_CONFIDENCE;
   const unsure = (r.uncertain || []).length;
   els.confidence.textContent = `Recognition confidence: ${pct}%. ` +
     (low ? "Likely mistakes: compare the board with your photo carefully." : "Check it matches your photo.") +
-    (unsure ? ` Dashed squares (${unsure}) are the least certain.` : "");
+    (unsure ? ` Dashed squares (${unsure}) are the least certain.` : "") +
+    orientationNote(r);
   els.confidence.classList.toggle("low", low);
   els.confidence.hidden = false;
 }

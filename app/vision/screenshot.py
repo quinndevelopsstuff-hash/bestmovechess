@@ -395,8 +395,100 @@ SQUARE_NAMES = [f"{f}{r}" for r in range(8, 0, -1) for f in "abcdefgh"]   # scre
 UNCERTAIN_BELOW = 0.6
 
 
-def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
-    """Recognition (same shape as the camera pipeline's) for a located screenshot board."""
+# --- orientation ---
+
+def _label_holes(lab: np.ndarray, grid: Grid, r: int, c: int, corner: str) -> int | None:
+    """Holes in the coordinate label drawn in one corner of a square (an "8" has two, a
+    "1" none), or None if there's no small blob fully inside that corner."""
+    S = grid.size
+    ya, xa = int(round(grid.y0 + r * S)), int(round(grid.x0 + c * S))
+    n = int(S)
+    sq = lab[ya: ya + n, xa: xa + n]
+    if sq.shape[:2] != (n, n):
+        return None
+    band, mid = max(2, n // 24), slice(n // 3, 2 * n // 3)
+    ring = np.concatenate([sq[:band, mid].reshape(-1, 3), sq[-band:, mid].reshape(-1, 3),
+                           sq[mid, :band].reshape(-1, 3), sq[mid, -band:].reshape(-1, 3)])
+    fg = (np.linalg.norm(sq - np.median(ring, axis=0), axis=2) > FG_DIST).astype(np.uint8)
+    q = int(n * 0.35)
+    ys = slice(0, q) if corner[0] == "T" else slice(n - q, n)
+    xs = slice(0, q) if corner[1] == "L" else slice(n - q, n)
+    region = np.ascontiguousarray(fg[ys, xs])
+    contours, hierarchy = cv2.findContours(region, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return None
+    best = None
+    for i, (cnt, h) in enumerate(zip(contours, hierarchy[0])):
+        if h[3] >= 0 or cv2.contourArea(cnt) < 0.002 * n * n:
+            continue
+        x, y, w, hh = cv2.boundingRect(cnt)
+        # A label sits inside the corner; anything reaching the corner's inner edges is a piece.
+        inner_x = x + w >= q - 1 if corner[1] == "L" else x <= 0
+        inner_y = y + hh >= q - 1 if corner[0] == "T" else y <= 0
+        if inner_x or inner_y:
+            continue
+        holes = sum(1 for j, hj in enumerate(hierarchy[0]) if hj[3] == i and cv2.contourArea(contours[j]) >= 2)
+        best = holes if best is None else max(best, holes)
+    return best
+
+
+def label_orientation(img: np.ndarray, grid: Grid) -> bool | None:
+    """True if the board is shown from Black's side, judged from rank labels drawn inside the
+    squares: in each edge column, the top square's label is "8" (two holes) and the
+    bottom one's "1" (none) when White is at the bottom, and the other way round when
+    flipped. None when no such labels are found or they disagree."""
+    lab = _lab(img)
+    votes = []
+    for c in (0, 7):
+        for corner in ("TL", "TR", "BL", "BR"):
+            top, bottom = _label_holes(lab, grid, 0, c, corner), _label_holes(lab, grid, 7, c, corner)
+            if (top, bottom) == (2, 0):
+                votes.append(False)
+            elif (top, bottom) == (0, 2):
+                votes.append(True)
+    return votes[0] if votes and len(set(votes)) == 1 else None
+
+
+def piece_orientation(readings: list[str]) -> bool | None:
+    """True if the pieces say the board is shown from Black's side. Pawns decide first:
+    pawns facing each other on a file (White's below Black's when White is at the bottom)
+    and pawns on their home ranks. Without pawn evidence, White's pieces sitting clearly
+    lower than Black's decide. Weak or conflicting evidence gives None. On 94 real game
+    positions (each also rotated 180 degrees) this decided 85 correctly, abstained on 8 and
+    got 1 wrong (a composed study with the white king on the 8th rank)."""
+    row = [i // 8 for i in range(64)]
+    facing = 0
+    for f in range(8):
+        whites = [row[i] for i in range(f, 64, 8) if readings[i] == "P"]
+        blacks = [row[i] for i in range(f, 64, 8) if readings[i] == "p"]
+        facing += sum(1 if w > b else -1 for w in whites for b in blacks)
+    home = (sum(readings[i] == "P" for i in range(48, 56)) + sum(readings[i] == "p" for i in range(8, 16))
+            - sum(readings[i] == "p" for i in range(48, 56)) - sum(readings[i] == "P" for i in range(8, 16)))
+    pawns = facing + home
+    if abs(pawns) >= 2:
+        return pawns < 0
+    white = [row[i] for i, p in enumerate(readings) if p.isupper()]
+    black = [row[i] for i, p in enumerate(readings) if p.islower()]
+    lower = float(np.mean(white) - np.mean(black)) if white and black else 0.0
+    if pawns and (pawns > 0) != (lower > 0):
+        return None
+    return lower < 0 if abs(lower) >= 1.5 else None
+
+
+def detect_orientation(img: np.ndarray, grid: Grid, readings: list[str]) -> tuple[bool, str]:
+    """(flipped, how it was decided: "labels", "pieces" or "default")."""
+    by_labels = label_orientation(img, grid)
+    if by_labels is not None:
+        return by_labels, "labels"
+    by_pieces = piece_orientation(readings)
+    if by_pieces is not None:
+        return by_pieces, "pieces"
+    return False, "default"
+
+
+def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile], flip: bool | None = None):
+    """Recognition (same shape as the camera pipeline's) for a located screenshot board.
+    flip: True/False forces the orientation (True = Black at the bottom); None detects it."""
     from .recognizer import Recognition, board_to_fen
     from .repair import repair
 
@@ -411,6 +503,16 @@ def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
         if best is None or fit > best[0]:
             best = (fit, prof, guesses)
     _, chosen, guesses = best
+    if flip is None:
+        flipped, orientation = detect_orientation(img, grid, [g.piece for g in guesses])
+    else:
+        flipped, orientation = flip, "requested"
+    corners = [[round(x, 1), round(y, 1)] for x, y in grid.corners]   # screen TL, TR, BR, BL
+    if flipped:
+        # Black at the bottom: screen squares are the board rotated 180 degrees (pieces
+        # stay upright, so the templates still apply). a8 is then the bottom-right corner.
+        guesses = guesses[::-1]
+        corners = corners[2:] + corners[:2]
     # Make the position legal with the cheapest changes (see repair.py).
     readings, repairs = repair([g.probs for g in guesses])
     board = [readings[r * 8: r * 8 + 8] for r in range(8)]
@@ -426,9 +528,11 @@ def recognize(img: np.ndarray, grid: Grid, profiles: list[Profile]):
         uncertain=[name for name, c in conf.items() if c < UNCERTAIN_BELOW or name in changed],
         repairs=repairs,
         alternatives={name: g.alternatives for name, g in zip(SQUARE_NAMES, guesses) if g.confidence < 0.9 and g.alternatives},
-        corners=[[round(x, 1), round(y, 1)] for x, y in grid.corners],
+        corners=corners,
         source="screenshot",
         profile=chosen.name,
+        flipped=flipped,
+        orientation=orientation,
     )
 
 

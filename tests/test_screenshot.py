@@ -29,9 +29,10 @@ def random_position(seed: int, plies: int = 30) -> tuple[chess.Board, chess.Move
     return board, last
 
 
-def phone_screenshot(board: chess.Board, board_px: int, lastmove=None, coordinates=False) -> np.ndarray:
+def phone_screenshot(board: chess.Board, board_px: int, lastmove=None, coordinates=False, flipped=False) -> np.ndarray:
     """The board inside a dark 'app' screen with buttons and text above and below it."""
-    svg = chess.svg.board(board, size=board_px, lastmove=lastmove, coordinates=coordinates)
+    svg = chess.svg.board(board, size=board_px, lastmove=lastmove, coordinates=coordinates,
+                          orientation=chess.BLACK if flipped else chess.WHITE)
     rendered = cv2.imdecode(np.frombuffer(render.cairosvg.svg2png(bytestring=svg.encode()), np.uint8), cv2.IMREAD_COLOR)
     w = int(rendered.shape[1] / 0.96)
     h = int(w * 2.17)
@@ -109,3 +110,55 @@ def test_repair_restores_a_misread_king(monkeypatch):
     assert rec.placement == "4k3/8/8/8/8/8/8/R3K3"
     assert rec.repairs == [{"square": "e8", "from": "q", "to": "k", "reason": "missing_king"}]
     assert "e8" in rec.uncertain
+
+
+# --- orientation ---
+
+@pytest.mark.parametrize("seed", [21, 22, 23])
+def test_detects_board_shown_from_blacks_side(seed):
+    board, last = random_position(seed, plies=20)
+    rec, _ = recognize(png(phone_screenshot(board, 640, last, flipped=True)), "screenshot")
+    assert rec.flipped and rec.orientation == "pieces"
+    assert rec.placement == board.board_fen()
+    # a8 is now the screen's bottom-right corner
+    assert rec.corners[0][0] > rec.corners[1][0] and rec.corners[0][1] > rec.corners[2][1]
+
+
+def test_normal_board_is_not_flipped():
+    board, last = random_position(24, plies=20)
+    rec, _ = recognize(png(phone_screenshot(board, 640, last)), "screenshot")
+    assert not rec.flipped and rec.orientation == "pieces" and rec.placement == board.board_fen()
+
+
+def test_labels_decide_when_pieces_cannot(monkeypatch):
+    from tests.test_calibrate import noto_board
+    from app import calibrate, config
+    import tempfile
+    monkeypatch.setattr(config, "PROFILES_DIR", tempfile.mkdtemp())
+    calibrate.calibrate(png(noto_board(chess.STARTING_BOARD_FEN)), "noto")
+    endgame = "8/8/4k3/8/8/3KR3/8/8"   # no pawns: the pieces alone can't tell
+    for flipped in (False, True):
+        rec, _ = recognize(png(noto_board(endgame, square=110, flipped=flipped, labels=True)), "screenshot")
+        assert (rec.flipped, rec.orientation, rec.placement) == (flipped, "labels", endgame)
+
+
+def test_no_evidence_keeps_white_at_the_bottom():
+    board = chess.Board("8/8/8/2k1K3/8/8/8/8 w - - 0 1")   # kings side by side: no clue either way
+    rec, _ = recognize(png(phone_screenshot(board, 600)), "screenshot")
+    assert (rec.flipped, rec.orientation) == (False, "default")
+
+
+def test_flip_can_be_forced():
+    board, last = random_position(25, plies=20)
+    data = png(phone_screenshot(board, 600, last, flipped=True))
+    rec, _ = recognize(data, "screenshot", flip=True)
+    assert rec.placement == board.board_fen() and rec.orientation == "requested"
+    rec, _ = recognize(data, "screenshot", flip=False)
+    assert rec.placement == board.transform(chess.flip_vertical).transform(chess.flip_horizontal).board_fen()
+
+
+def test_piece_orientation_rules():
+    start = ss.expand(chess.STARTING_BOARD_FEN)
+    assert ss.piece_orientation(start) is False and ss.piece_orientation(start[::-1]) is True
+    assert ss.piece_orientation(ss.expand("8/8/8/2k1K3/8/8/8/8")) is None
+    assert ss.piece_orientation(ss.expand("8/8/4k3/8/8/3K4/8/8")) is False   # White's king clearly lower

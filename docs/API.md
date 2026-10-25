@@ -87,6 +87,7 @@ Send `multipart/form-data`:
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
 | `depth`    | no       | As for `GET`                                                         |
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
+| `flip`     | no       | Screenshots: `auto` (default) detects whether the board is shown from Black's side; `true`/`false` forces it |
 | `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
 
 Castling and en passant default to none because they can't be seen in a photo.
@@ -123,6 +124,8 @@ It returns every field of `GET /move`, plus:
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
+| `flipped`      | bool   | Screenshots: the board was read with Black at the bottom (`corners` then start at the bottom-right) |
+| `orientation`  | string / null | Screenshots: how `flipped` was decided: `labels` (coordinates inside the squares), `pieces` (pawn structure and piece placement), `default` (no clear evidence, White assumed at the bottom) or `requested` (the `flip` field); `null` for photos |
 | `profile`      | string / null | Screenshot recognizer: the template profile used (`builtin` or a calibrated one); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
@@ -293,7 +296,7 @@ text. It always returns status 200.
 ## POST /calibrate
 
 Teaches the screenshot recognizer a piece set. Send a screenshot of the **starting
-position with White at the bottom** as `multipart/form-data`:
+position** (White or Black at the bottom) as `multipart/form-data`:
 
 | Field     | Required | Meaning |
 |-----------|----------|---------|
@@ -307,7 +310,7 @@ curl -F image=@start.png -F name=chesscom https://<your-host>/calibrate
 ```
 
 ```json
-{"profile": "chesscom", "square_px": 115.0, "screenshot": true, "profiles": ["chesscom"]}
+{"profile": "chesscom", "square_px": 115.0, "screenshot": true, "flipped": false, "profiles": ["chesscom"]}
 ```
 
 The 12 pieces are cut out (copies averaged) and saved as small 64×64 silhouettes. The
@@ -320,7 +323,6 @@ screenshot itself is processed in memory and never stored. Errors:
 | 415 | `invalid_image` | Not a JPEG/PNG/WebP image |
 | 422 | `board_not_found` | No flat 8×8 board in the screenshot |
 | 422 | `wrong_position` | It doesn't show the starting position (or `fen`); `detail` says which squares disagree |
-| 422 | `flipped` | The board is shown from Black's side |
 | 422 | `invalid_request` | Bad `name` or `fen`, or `MAX_PROFILES` reached |
 
 ## GET /profiles

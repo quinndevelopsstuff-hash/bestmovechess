@@ -31,6 +31,10 @@ out are disabled. **Image type** is normally auto-detected; set it to Screenshot
 Camera photo to force one recognizer. With no photo, enter a FEN or tap **Set up a position by hand** and
 edit the board directly.
 
+Screenshots of a board shown from Black's side are detected automatically, and the
+correction board is drawn the same way round. If detection gets it wrong, tick **Board is
+shown from Black's side** and read the board again (or use Rotate).
+
 Tick **Show diagram** to also show a server-drawn picture of the position and best
 move under the result (using `img_out`, see the API). The picture is redrawn for
 positions you've edited, and an explanatory image appears when something goes wrong.
@@ -173,6 +177,22 @@ probabilities, that give one king per side (not adjacent), no pawns on ranks 1 o
 at most 8 pawns per side. Repaired and low-confidence squares come back in `uncertain`,
 and they're shaded amber on the correction board and in error images.
 
+Boards shown from Black's side are detected (response `flipped`, with `orientation`
+saying how), in this order:
+
+1. **Coordinate labels drawn inside the squares**, as chess.com draws them. In an edge
+   column, the top square's rank label is an "8" (two enclosed holes) and the bottom one's
+   a "1" (none) when White is at the bottom, and the other way round when flipped. This
+   needs no OCR and works at phone screenshot sizes (squares from about 90 px).
+2. **Piece placement.** Pawns facing each other on a file and pawns on their home ranks
+   decide first. Without pawn evidence, White's pieces sitting clearly lower than Black's
+   decide. On 94 real game positions (each also shown flipped) this decided 85 correctly,
+   left 8 undecided and got 1 wrong (a composed endgame study).
+3. **Otherwise, White is assumed to be at the bottom.**
+
+The `flip` form field (`true`/`false`) overrides detection. Camera photos keep their own
+orientation detection (White is assumed to be nearer the camera).
+
 **Photos** (`app/vision/recognizer.py`). This is the pretrained model:
 
 1. **Board detection.** It finds the "X-corners" where four squares meet and fits
@@ -203,7 +223,7 @@ and avoid strong reflections.
 
 The screenshot recognizer knows the standard "cburnett" pieces out of the box (lichess's
 default). For any other piece set, such as chess.com's, calibrate it once with a
-screenshot of the **starting position with White at the bottom**. Calibration cuts out
+screenshot of the **starting position** (White or Black at the bottom). Calibration cuts out
 the 12 pieces (averaging the copies of each) and saves them as a named profile. After
 that, screenshots in that set are matched against it. You can save several profiles
 (different piece sets, board themes, light and dark mode); each screenshot is matched
@@ -221,8 +241,8 @@ response's `profile` field says which.
 
 Calibration checks the screenshot first. The middle four ranks must be empty, every
 starting square must hold a piece, the colours must split cleanly, and all copies of a
-piece must match. If any check fails, it tells you what's wrong (for example "the board
-is shown from Black's side"). A known position other than the start can be used with
+piece must match. If any check fails, it tells you what's wrong (for example "no piece on
+e2"). A known position other than the start can be used with
 `--fen` / `fen=`, as long as it contains all 12 kinds of piece.
 
 **Profiles stay local.** A profile is a small file (about 7 KB) holding only the 12

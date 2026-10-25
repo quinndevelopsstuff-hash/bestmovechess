@@ -60,12 +60,13 @@ def decode(image: bytes) -> np.ndarray:
 SOURCES = ("auto", "screenshot", "camera")
 
 
-def recognize(image: bytes, source: str = "auto") -> tuple[Recognition, tuple[int, int]]:
+def recognize(image: bytes, source: str = "auto", flip: bool | None = None) -> tuple[Recognition, tuple[int, int]]:
     """Return the recognition and the (width, height) its corner coordinates refer to.
 
     source: "screenshot" uses the template matcher for flat digital boards, "camera" the
     photo model, and "auto" picks the template matcher when the image contains a clean
-    axis-aligned board."""
+    axis-aligned board. flip forces a screenshot's orientation (True = Black at the
+    bottom); None detects it. Camera photos have their own orientation detection."""
     if source == "camera":
         _get_recognizer()   # fail fast if the model is missing
     img = decode(image)
@@ -78,7 +79,7 @@ def recognize(image: bytes, source: str = "auto") -> tuple[Recognition, tuple[in
                 if grid is None and source == "screenshot":
                     raise BoardNotFound("couldn't find a flat 8x8 board in the screenshot")
                 if known and grid is not None:
-                    return screenshot.recognize(img, grid, known), size
+                    return screenshot.recognize(img, grid, known, flip), size
                 if source == "screenshot":
                     raise RecognitionUnavailable("no piece profiles available; calibrate one first")
         return _get_recognizer().recognize(img), size
