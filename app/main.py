@@ -16,12 +16,10 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import calibrate as calibration
 from . import config, render
 from .engine import Engine, EngineUnavailable
 from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, recognize
 from .upload import UploadError, read_form
-from .vision import profiles
 
 logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bestmovechess")
@@ -118,6 +116,10 @@ def parse_fen(fen: str, extra: dict | None = None) -> chess.Board:
         board = chess.Board(fen)
     except ValueError as exc:
         raise APIError(400, "invalid_fen", f"could not parse FEN: {exc}", extra) from None
+    return check_position(board, extra)
+
+
+def check_position(board: chess.Board, extra: dict | None = None) -> chess.Board:
     status = board.status()
     if status != chess.STATUS_VALID:
         problems = list(dict.fromkeys(msg for flag, msg in _STATUS_MESSAGES if status & flag))
@@ -185,9 +187,9 @@ _POST_MOVE_FORM = {
                 "ep": {"type": "string", "description": "En passant file a-h, if any"},
                 "depth": {"type": "integer", "minimum": 1, "maximum": config.MAX_DEPTH},
                 "source": {"type": "string", "enum": list(SOURCES), "default": "auto",
-                           "description": "screenshot (flat digital board), camera (photo), or auto-detect"},
+                           "description": "auto: chessfen first, photo model as fallback; screenshot: chessfen only; camera: photo model only"},
                 "flip": {"type": "string", "enum": ["auto", "true", "false"], "default": "auto",
-                         "description": "Screenshots: true if the board is shown with Black at the bottom"},
+                         "description": "Screenshots: true if Black is at the bottom; auto lets chessfen guess"},
                 "img_out": {"type": "boolean", "default": False,
                             "description": "Also return image_url, a rendered diagram of the result"},
             },
@@ -233,7 +235,6 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
     ep = fields.get("ep", "").strip().lower()
     if ep and (len(ep) != 1 or ep not in "abcdefgh"):
         raise APIError(422, "invalid_request", "ep: must be a file letter a-h")
-    ep_square = f"{ep}{'6' if turn == 'w' else '3'}" if ep else "-"
     source = fields.get("source", "").strip().lower() or "auto"
     if source not in SOURCES:
         raise APIError(422, "invalid_request", "source: must be auto, screenshot or camera")
@@ -260,7 +261,14 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
     except BoardNotFound as exc:
         raise APIError(422, "board_not_found", f"{exc}; fill the frame with the board and avoid glare") from None
 
-    fen = f"{rec.placement} {turn} {castling} {ep_square} 0 1"
+    # The final position is ours, not the recognizer's: its piece placement plus the user's
+    # side to move, castling rights and en passant (a photo can't show those).
+    board = chess.Board(None)
+    board.set_board_fen(rec.placement)
+    board.turn = turn == "w"
+    board.set_castling_fen(castling)
+    board.ep_square = chess.parse_square(f"{ep}{'6' if turn == 'w' else '3'}") if ep else None
+    fen = board.fen(en_passant="fen")
     extra = {
         "detected": rec.placement,
         "confidence": rec.confidence,
@@ -271,64 +279,10 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         "corners": rec.corners,
         "image_size": [width, height],
         "source": rec.source,
-        "profile": rec.profile,
         "flipped": rec.flipped,
         "orientation": rec.orientation,
     }
-    return await best_move(request, parse_fen(fen, {**extra, "fen": fen}), depth, extra)
-
-
-# --- screenshot calibration ---
-
-_CALIBRATE_FORM = {
-    "requestBody": {
-        "required": True,
-        "content": {"multipart/form-data": {"schema": {
-            "type": "object",
-            "required": ["image", "name"],
-            "properties": {
-                "image": {"type": "string", "format": "binary",
-                          "description": "Screenshot of the starting position, White at the bottom"},
-                "name": {"type": "string", "description": "Profile name: lowercase letters, digits, - and _"},
-                "replace": {"type": "boolean", "default": False, "description": "Overwrite a profile with this name"},
-                "fen": {"type": "string", "description": "Piece placement shown, if not the starting position"},
-            },
-        }}},
-    }
-}
-
-
-@app.post("/calibrate", openapi_extra=_CALIBRATE_FORM)
-async def calibrate(request: Request):
-    """Save the pieces of a starting-position screenshot as a template profile."""
-    if not config.CALIBRATION_ENABLED:
-        raise APIError(403, "calibration_disabled", "calibration is turned off on this server (CALIBRATION_ENABLED)")
-    fields, files = await read_form(request, config.MAX_UPLOAD_BYTES)
-    image = files.pop("image", None)
-    files.clear()
-    try:
-        if not image:
-            raise APIError(422, "invalid_request", "image: field required")
-        name = fields.get("name", "")
-        replace = fields.get("replace", "").strip().lower() in ("true", "1", "yes", "on")
-        try:
-            return await run_in_threadpool(calibration.calibrate, image, name, fields.get("fen", ""), replace)
-        except FileExistsError:
-            raise APIError(409, "profile_exists", f"a profile named {name.strip().lower()!r} already exists; send replace=true to overwrite it") from None
-        except calibration.CalibrationError as exc:
-            raise APIError(422, exc.code, exc.detail) from None
-        except profiles.ProfileError as exc:
-            raise APIError(422, "invalid_request", str(exc)) from None
-        except InvalidImage as exc:
-            raise APIError(415, "invalid_image", str(exc)) from None
-    finally:
-        del image
-
-
-@app.get("/profiles")
-async def list_profiles():
-    """Template profiles screenshot recognition matches against."""
-    return {"profiles": profiles.saved_names(), "builtin": any(p.name == profiles.BUILTIN for p in profiles.all_profiles())}
+    return await best_move(request, check_position(board, {**extra, "fen": fen}), depth, extra)
 
 
 # --- diagrams ---

@@ -17,8 +17,6 @@ The same app that serves the web page serves a small JSON API.
 | POST   | `/move`    | Recognise a board photo, then best move     |
 | GET    | `/img`     | PNG/SVG diagram of a position and best move |
 | GET    | `/img/error` | PNG/SVG image explaining an error code    |
-| POST   | `/calibrate` | Save a piece set's templates from a screenshot |
-| GET    | `/profiles` | List saved template profiles               |
 | GET    | `/healthz` | Liveness check                              |
 
 ## Conventions
@@ -87,7 +85,7 @@ Send `multipart/form-data`:
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
 | `depth`    | no       | As for `GET`                                                         |
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
-| `flip`     | no       | Screenshots: `auto` (default) detects whether the board is shown from Black's side; `true`/`false` forces it |
+| `flip`     | no       | Screenshots: `auto` (default) lets chessfen guess whether Black is at the bottom; `true`/`false` forces it |
 | `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
 
 Castling and en passant default to none because they can't be seen in a photo.
@@ -116,17 +114,16 @@ It returns every field of `GET /move`, plus:
 | Field          | Type   | Meaning |
 |----------------|--------|---------|
 | `detected`     | string | Recognised piece placement (the first FEN field) |
-| `confidence`   | number | 0–1 estimate that the **whole board** is right. On held-out test photos every board at ≥ 0.8 was fully correct, and below 0.5 only about half were |
-| `squares`      | object | Model confidence for the piece chosen on each square. Values top out near 0.95, because the model was trained that way |
-| `uncertain`    | array  | Squares below 0.85, the ones most worth checking |
-| `alternatives` | object | For squares below 0.9: the model's top guesses, e.g. `{"f6": [["n", 0.74], ["b", 0.21]]}` |
-| `repairs`      | array  | Changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns`, and for screenshots `kings_adjacent` |
+| `confidence`   | number | 0–1 estimate that the **whole board** is right (photos), or the weakest square's confidence (screenshots). On held-out test photos every board at ≥ 0.8 was fully correct, and below 0.5 only about half were |
+| `squares`      | object | Confidence for the piece chosen on each square. Photos: model probability (tops out near 0.95, because the model was trained that way). Screenshots: chessfen's verdict, scaled so that below 0.6 means chessfen doubted it |
+| `uncertain`    | array  | The squares most worth checking: photo squares below 0.85, or the squares chessfen doubted |
+| `alternatives` | object | Photos, for squares below 0.9: the model's top guesses, e.g. `{"f6": [["n", 0.74], ["b", 0.21]]}`. Empty for screenshots |
+| `repairs`      | array  | Photos: changes made to keep the position legal, e.g. `{"square": "e1", "from": "Q", "to": "K", "reason": "missing_king"}`. Reasons: `pawn_on_back_rank`, `extra_king`, `missing_king`, `too_many_pawns`. Always empty for screenshots: an illegal screenshot reading comes back as an `illegal_position` error with the board, so you can correct it |
 | `corners`      | array  | Pixel positions of the board's a8, h8, h1 and a1 corners in the image |
 | `image_size`   | array  | `[width, height]` that `corners` refers to; images over 2000 px are shrunk first |
 | `source`       | string | Which recognizer ran: `screenshot` or `camera` |
 | `flipped`      | bool   | Screenshots: the board was read with Black at the bottom (`corners` then start at the bottom-right) |
-| `orientation`  | string / null | Screenshots: how `flipped` was decided: `labels` (coordinates inside the squares), `pieces` (pawn structure and piece placement), `default` (no clear evidence, White assumed at the bottom) or `requested` (the `flip` field); `null` for photos |
-| `profile`      | string / null | Screenshot recognizer: the template profile used (`builtin` or a calibrated one); `null` for photos |
+| `orientation`  | string / null | Screenshots: `chessfen` (chessfen guessed from where each side's pieces stand) or `requested` (the `flip` field); `null` for photos |
 
 The board is assumed to be photographed with White nearer the camera. If the photo was
 taken from the side or from Black's end, the detected position may be rotated.
@@ -158,35 +155,32 @@ someone fix it:
 
 There are two recognizers:
 
-- **`screenshot`**: for flat digital boards, such as a phone screenshot of a chess app or
-  a website. It finds the axis-aligned 8×8 board among the surrounding UI and matches
-  each piece's silhouette against piece templates. There's no ML involved.
+- **`screenshot`**: [chessfen](https://github.com/sunfmin/chessfen) (pure pixel math, no
+  ML model), for flat digital boards such as a phone screenshot of a chess app. The board
+  is first found by its checker pattern and cropped out, so the surrounding UI doesn't
+  matter.
 - **`camera`**: the pretrained model for photos of a physical board.
 
-With `auto` (the default), the screenshot recognizer runs when the image contains a clean
-axis-aligned board, where squares of one colour are practically identical. Otherwise the
-photo model runs. The response's `source` says which recognizer ran. In the screenshot
-recognizer, `squares` scores how well each square matched its template, `alternatives`
-gives the next-best templates, e.g. `{"b8": [["r", 0.77], ["n", 0.76], ["p", 0.72]]}`, and
-`uncertain` lists the squares to check: those scoring below 0.6, plus any square changed by
-repair.
+With `auto` (the default), an image containing a flat digital board, where squares of
+one colour are practically identical, goes to chessfen. Everything else goes to the photo
+model, as does a screenshot chessfen can't read (no board found, or an error). The
+response's `source` says which recognizer ran.
 
-**Repair (screenshots).** If the reading isn't a legal position, the screenshot
-recognizer makes the cheapest changes that fix it. Each square's matches are turned into
-probabilities for every possible reading, and the fixes with the least total
-improbability are chosen:
+For screenshots, only the piece placement comes from chessfen. Side to move, castling
+(default none) and en passant come from your fields. Squares chessfen doubted are listed
+in `uncertain`, however many there are; the reading is never swapped for the photo
+model's, which reads flat screenshots much worse.
 
-- no pawns on ranks 1 or 8;
-- exactly one king per side, with the kings not adjacent (every placement of both kings
-  is tried);
-- at most 8 pawns per side.
+chessfen needs Python 3.13+. On older Pythons it isn't installed: `auto` sends
+everything to the photo model, and `source=screenshot` returns
+`501 recognition_unavailable`.
 
-Each change is listed in `repairs`, and the square is added to `uncertain`. A board that's
-already legal is never changed.
+### `flip`: board shown from Black's side
 
-The screenshot recognizer works without setup for boards drawn with the standard
-"cburnett" pieces (lichess's default, also used by `/img`). Other piece sets, such as
-chess.com's, match less well until you calibrate a profile for them.
+For screenshots, chessfen guesses which side is at the bottom from where each colour's
+pieces stand. `flip=true` (Black at the bottom) or `flip=false` overrides it. The
+response's `flipped` and `orientation` say what was used. Camera photos ignore `flip`,
+because the photo model has its own orientation logic.
 
 ### `img_out`: a diagram of the result
 
@@ -292,46 +286,6 @@ curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
 
 The message text comes from a fixed table, and nothing from the request is drawn as
 text. It always returns status 200.
-
-## POST /calibrate
-
-Teaches the screenshot recognizer a piece set. Send a screenshot of the **starting
-position** (White or Black at the bottom) as `multipart/form-data`:
-
-| Field     | Required | Meaning |
-|-----------|----------|---------|
-| `image`   | yes      | The screenshot (at most `MAX_UPLOAD_MB`) |
-| `name`    | yes      | Profile name: 1–40 lowercase letters, digits, `-` or `_` |
-| `replace` | no       | `true` to overwrite an existing profile with this name |
-| `fen`     | no       | Piece placement shown, if not the starting position (must contain all 12 pieces) |
-
-```sh
-curl -F image=@start.png -F name=chesscom https://<your-host>/calibrate
-```
-
-```json
-{"profile": "chesscom", "square_px": 115.0, "screenshot": true, "flipped": false, "profiles": ["chesscom"]}
-```
-
-The 12 pieces are cut out (copies averaged) and saved as small 64×64 silhouettes. The
-screenshot itself is processed in memory and never stored. Errors:
-
-| Status | `error` | When |
-|-------:|---------|------|
-| 403 | `calibration_disabled` | `CALIBRATION_ENABLED=false` |
-| 409 | `profile_exists` | A profile with that name exists and `replace` wasn't set |
-| 415 | `invalid_image` | Not a JPEG/PNG/WebP image |
-| 422 | `board_not_found` | No flat 8×8 board in the screenshot |
-| 422 | `wrong_position` | It doesn't show the starting position (or `fen`); `detail` says which squares disagree |
-| 422 | `invalid_request` | Bad `name` or `fen`, or `MAX_PROFILES` reached |
-
-## GET /profiles
-
-```json
-{"profiles": ["chesscom", "lichess-dark"], "builtin": true}
-```
-
-`builtin` is true when the built-in python-chess profile is available (it needs Cairo).
 
 ## GET /healthz
 

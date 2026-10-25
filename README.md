@@ -6,9 +6,10 @@ the best move.
 
 Runs well on a Raspberry Pi 5, and on any Linux/macOS machine or in Docker.
 
-Photo recognition finds the board, corrects for perspective, and classifies each
-square with a small pretrained CNN running on ONNX Runtime. It takes about a second
-per photo and needs no GPU. See [How recognition works](#how-recognition-works).
+Screenshots of a chess app are read by [chessfen](https://github.com/sunfmin/chessfen)
+(pure pixel math, no ML model). Camera photos of a real board are read by a small
+pretrained CNN running on ONNX Runtime, which finds the board and corrects for
+perspective. Neither needs a GPU. See [How recognition works](#how-recognition-works).
 
 ## Web page
 
@@ -28,12 +29,12 @@ Open `http://127.0.0.1:8000/` (or your Tailscale URL).
 Under "Castling, en passant, image type, depth" you can set what a photo can't show:
 castling and en passant default to none, and castling options that the position rules
 out are disabled. **Image type** is normally auto-detected; set it to Screenshot or
-Camera photo to force one recognizer. With no photo, enter a FEN or tap **Set up a position by hand** and
-edit the board directly.
+Camera photo to force one recognizer. With no photo, enter a FEN or tap **Set up a
+position by hand** and edit the board directly.
 
-Screenshots of a board shown from Black's side are detected automatically, and the
-correction board is drawn the same way round. If detection gets it wrong, tick **Board is
-shown from Black's side** and read the board again (or use Rotate).
+For screenshots, chessfen guesses which side is at the bottom, and the correction board
+is drawn the same way round. If the guess is wrong, tick **Board is shown from Black's
+side** and read the board again (or use Rotate).
 
 Tick **Show diagram** to also show a server-drawn picture of the position and best
 move under the result (using `img_out`, see the API). The picture is redrawn for
@@ -82,9 +83,14 @@ authentication, so keep the app on localhost or a private network.
 
 ### Raspberry Pi (Raspberry Pi OS / Debian / Ubuntu)
 
+Screenshot recognition (chessfen) needs **Python 3.13 or newer**. Raspberry Pi OS
+"Trixie" has it; the older "Bookworm" has Python 3.11. Check with `python3 --version`.
+On 3.11 everything else works: pip skips chessfen, and screenshots are read by the
+photo model instead (much less accurately).
+
 ```sh
 sudo apt update
-sudo apt install -y git python3-venv stockfish libcairo2 fonts-dejavu-core
+sudo apt install -y git python3-venv stockfish libcairo2 fonts-dejavu-core   # git is needed to install chessfen
 
 sudo git clone https://github.com/<you>/bestmovechess.git /opt/bestmovechess
 cd /opt/bestmovechess
@@ -128,12 +134,11 @@ Run the tests with `.venv/bin/pip install pytest httpx && .venv/bin/python -m py
 
 ```sh
 docker build -t bestmovechess .
-docker run -d --name bestmovechess --restart unless-stopped -p 127.0.0.1:8000:8000 \
-  -v bestmovechess-profiles:/data/profiles bestmovechess
+docker run -d --name bestmovechess --restart unless-stopped -p 127.0.0.1:8000:8000 bestmovechess
 ```
 
-Pass settings with `-e`, e.g. `-e ENGINE_THREADS=4`. The image builds on both
-amd64 and arm64, and downloads the model during the build.
+Pass settings with `-e`, e.g. `-e ENGINE_THREADS=4`. The image (Python 3.13) builds on
+both amd64 and arm64, and downloads the model during the build.
 
 ### Configuration
 
@@ -153,45 +158,41 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `VISION_THREADS`     | `2`                         | ONNX Runtime threads                     |
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
-| `PROFILES_DIR`       | `profiles/`                 | Piece-template profiles for screenshot recognition (the systemd unit uses `/var/lib/bestmovechess`) |
-| `CALIBRATION_ENABLED`| `true`                      | Allow `POST /calibrate` |
-| `MAX_PROFILES`       | `20`                        | Most profiles `POST /calibrate` may create |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
 
 ## How recognition works
 
-There are two recognizers. With the default `source=auto`, the app picks one per upload.
+There are two recognizers. With the default `source=auto`, the app picks one per upload:
+an image that contains a flat digital board (a screenshot) goes to chessfen, and anything
+else goes to the photo model. If chessfen can't read a screenshot, the photo model gets
+it. `source=screenshot` or `source=camera` forces one.
 
-**Screenshots** (`app/vision/screenshot.py`, no ML). It searches the image for an
-axis-aligned 8×8 grid whose same-coloured squares are practically identical, then snaps
-it to the grid lines, so a board surrounded by app UI (avatars, buttons, dark mode) is
-found at any resolution. For each square it takes the background colour from the
-square's border, so highlighted last-move squares work. It marks pixels that differ,
-drops small blobs such as coordinate labels, and fills holes to get the piece
-silhouette. The silhouette is matched against piece templates scaled to the same size,
-and the piece's colour is decided relative to the other pieces on the board. Templates
-come from a built-in profile rendered from python-chess's pieces, plus any profiles in
-`PROFILES_DIR`. If the result isn't a legal position, a rule-based repair
-(`app/vision/repair.py`) makes the cheapest changes, based on each square's match
-probabilities, that give one king per side (not adjacent), no pawns on ranks 1 or 8, and
-at most 8 pawns per side. Repaired and low-confidence squares come back in `uncertain`,
-and they're shaded amber on the correction board and in error images.
+**Is it a screenshot?** (`app/vision/board_finder.py`). The app searches for an
+axis-aligned 8×8 grid whose same-coloured squares are practically identical, with
+crisp grid lines. A camera photo never passes this test: none of 104 real photos did,
+because lighting and perspective always vary. Screenshots pass, including
+heavily compressed JPEGs.
 
-Boards shown from Black's side are detected (response `flipped`, with `orientation`
-saying how), in this order:
+**Screenshots** (`app/vision/screenshot.py`):
+[chessfen](https://github.com/sunfmin/chessfen) by sunfmin, which uses pure pixel math
+and no ML model. The board found by the checker search is cropped out first, with a
+small margin, so avatars, move lists and buttons stay out of the way. If the crop can't
+be read, chessfen gets the whole screenshot. chessfen matches each square's piece
+silhouette against python-chess's piece shapes and decides the colour by comparing the
+piece with the light around it. Squares it isn't sure about come back in `uncertain`
+(and with a confidence below 0.6 in `squares`), and they're shaded amber on the
+correction board and in error images. A doubtful reading is never hidden or swapped
+for the photo model's, because the photo model reads flat screenshots far worse. Only
+the piece placement is taken from chessfen. The FEN's side to move, castling rights
+(none unless you tick them) and en passant come from your choices. chessfen guesses
+whether Black is at the bottom from where each side's pieces stand; the `flip` field
+overrides it (response: `flipped`, and `orientation` is `chessfen` or `requested`).
 
-1. **Coordinate labels drawn inside the squares**, as chess.com draws them. In an edge
-   column, the top square's rank label is an "8" (two enclosed holes) and the bottom one's
-   a "1" (none) when White is at the bottom, and the other way round when flipped. This
-   needs no OCR and works at phone screenshot sizes (squares from about 90 px).
-2. **Piece placement.** Pawns facing each other on a file and pawns on their home ranks
-   decide first. Without pawn evidence, White's pieces sitting clearly lower than Black's
-   decide. On 94 real game positions (each also shown flipped) this decided 85 correctly,
-   left 8 undecided and got 1 wrong (a composed endgame study).
-3. **Otherwise, White is assumed to be at the bottom.**
-
-The `flip` form field (`true`/`false`) overrides detection. Camera photos keep their own
-orientation detection (White is assumed to be nearer the camera).
+On a chess.com screenshot (1.e4 e5, dark theme) it read 56 of 64 squares, and all 8
+mistakes were among the squares it flagged as doubtful. chessfen's templates are the
+"cburnett" pieces (lichess's default), so other piece sets are read less reliably;
+always check the doubtful squares. It takes about 1–2 seconds per screenshot on a
+desktop CPU, and more on a Pi.
 
 **Photos** (`app/vision/recognizer.py`). This is the pretrained model:
 
@@ -219,55 +220,23 @@ the frame. **Always check the detected position before trusting the move.**
 Tips: shoot from above or from White's side, fill most of the frame with the board,
 and avoid strong reflections.
 
-### Calibrating screenshots for your chess app
-
-The screenshot recognizer knows the standard "cburnett" pieces out of the box (lichess's
-default). For any other piece set, such as chess.com's, calibrate it once with a
-screenshot of the **starting position** (White or Black at the bottom). Calibration cuts out
-the 12 pieces (averaging the copies of each) and saves them as a named profile. After
-that, screenshots in that set are matched against it. You can save several profiles
-(different piece sets, board themes, light and dark mode); each screenshot is matched
-against all of them, and the best-fitting profile is used for the whole board. The
-response's `profile` field says which.
-
-- **Web page:** open "Teach it your chess app's pieces", choose the screenshot, give it a
-  name, and tap Save.
-- **API:** `curl -F image=@start.png -F name=chesscom https://<your-host>/calibrate`
-  (`GET /profiles` lists them; send `replace=true` to overwrite one).
-- **Command line, on the server:**
-  `python -m app.calibrate start.png --name chesscom` (`--list` to see profiles). With
-  the systemd service, add `PROFILES_DIR=/var/lib/bestmovechess` so the service sees it:
-  `sudo PROFILES_DIR=/var/lib/bestmovechess .venv/bin/python -m app.calibrate start.png --name chesscom`.
-
-Calibration checks the screenshot first. The middle four ranks must be empty, every
-starting square must hold a piece, the colours must split cleanly, and all copies of a
-piece must match. If any check fails, it tells you what's wrong (for example "no piece on
-e2"). A known position other than the start can be used with
-`--fen` / `fen=`, as long as it contains all 12 kinds of piece.
-
-**Profiles stay local.** A profile is a small file (about 7 KB) holding only the 12
-piece silhouettes at 64×64 pixels and their brightness, never the screenshot. It's
-stored in `PROFILES_DIR` (`profiles/` in the repo folder, gitignored;
-`/var/lib/bestmovechess` for the systemd service; `/data/profiles` in Docker). The
-repository contains no chess.com (or other third-party) artwork: the built-in profile is
-rendered at startup from python-chess's pieces, and the tests draw their boards at test
-time.
-
-`POST /calibrate` writes files from requests, so it is capped at `MAX_PROFILES`
-profiles and can be turned off with `CALIBRATION_ENABLED=false`. Like the rest of the
-app, keep it on a private network.
-
 ### Measuring recognition
 
 `python -m app.evaluate` runs the recognizer over local fixtures and prints per-square
-accuracy, accuracy by piece type, and a confusion table. A fixture is an image in
+accuracy, accuracy by piece type, a confusion table, and how many wrong squares were
+flagged as uncertain. Add `--source screenshot` or `--source camera` to test one
+recognizer. A fixture is an image in
 `tests/fixtures/` plus a `.fen` sidecar with the expected piece placement; see
 `tests/fixtures/README.md`. Fixtures are gitignored and never committed, since
 screenshots can contain third-party artwork.
 
 ### Credits
 
-- Recognition model and the detection/cropping code in `app/vision/`:
+- Screenshot recognition: [chessfen](https://github.com/sunfmin/chessfen) by sunfmin,
+  GPL-3.0, installed by pip from a pinned commit (`requirements.txt`).
+- [python-chess](https://github.com/niklasf/python-chess) by Niklas Fiekas,
+  GPL-3.0-or-later: board logic, FEN handling and the diagrams.
+- Photo recognition model and the detection/cropping code in `app/vision/`:
   [ChessLens](https://github.com/zeljko1611/ChessLens) by zeljko1611, MIT License
   (see `app/vision/LICENSE`). The model file is downloaded from a pinned commit and
   checked against its SHA-256.
@@ -279,6 +248,15 @@ screenshots can contain third-party artwork.
   paths, so they look the same on every device and dark mode can't recolour them.
 - [Stockfish](https://stockfishchess.org/) (GPLv3) is installed separately and run as
   a separate program.
+
+## License
+
+bestmovechess is free software under the **GNU General Public License, version 3 or
+(at your option) any later version** (GPL-3.0-or-later); see `LICENSE`. In short: you
+can use, change and self-host it freely, and if you distribute a modified version, you
+must make its source available under the same license. It builds on chessfen (GPL-3.0)
+and python-chess (GPL-3.0-or-later); `NOTICE` credits these and the other third-party
+parts.
 
 ## Optional: private access with Tailscale
 
@@ -303,8 +281,8 @@ files to a temporary file on disk. The image is decoded with OpenCV straight fro
 memory, and nothing in the recognition pipeline writes files. Image bytes are never
 logged. The tests fail if an upload ever touches a temporary file.
 
-Calibration screenshots are handled the same way. They're decoded in memory and dropped
-as soon as the piece silhouettes are cut out, and only those small templates are saved.
+Screenshots are handed to chessfen as in-memory arrays. It doesn't read or write files
+while recognizing, and the tests fail if it ever does.
 
 Output images are drawn from the position on request and are never stored. Diagrams
 from `/img` and `/img/error` are generated in memory from the FEN alone. They never

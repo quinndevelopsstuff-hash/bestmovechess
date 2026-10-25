@@ -1,11 +1,11 @@
-FROM python:3.12-slim-bookworm
+# Python 3.13: chessfen (screenshot recognition) requires it.
+FROM python:3.13-slim-bookworm
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends stockfish libcairo2 fonts-dejavu-core \
+ && apt-get install -y --no-install-recommends stockfish libcairo2 fonts-dejavu-core git \
  && rm -rf /var/lib/apt/lists/*
 
 ENV STOCKFISH_PATH=/usr/games/stockfish \
-    PROFILES_DIR=/data/profiles \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -17,11 +17,8 @@ RUN python scripts/download_model.py
 COPY app ./app
 COPY static ./static
 
-RUN useradd --system --no-create-home appuser \
- && mkdir -p /data/profiles && chown appuser /data/profiles
+RUN useradd --system --no-create-home appuser
 USER appuser
-# Calibrated screenshot profiles (small piece templates); mount a volume to keep them.
-VOLUME /data/profiles
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

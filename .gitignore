@@ -9,5 +9,3 @@ models/*.onnx
 # Local recognition fixtures (screenshots/photos + .fen sidecars). Never committed.
 tests/fixtures/*
 !tests/fixtures/README.md
-# Calibrated piece-template profiles stay local (they may derive from third-party artwork).
-profiles/

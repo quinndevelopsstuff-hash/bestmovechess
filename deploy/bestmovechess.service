@@ -11,9 +11,6 @@ WorkingDirectory=/opt/bestmovechess
 Environment=HOST=127.0.0.1
 Environment=PORT=8000
 Environment=PYTHONDONTWRITEBYTECODE=1
-# Calibrated screenshot profiles live in the service's own writable state directory.
-Environment=PROFILES_DIR=/var/lib/bestmovechess
-StateDirectory=bestmovechess
 EnvironmentFile=-/etc/bestmovechess.env
 ExecStart=/opt/bestmovechess/.venv/bin/uvicorn app.main:app --host ${HOST} --port ${PORT} --no-access-log
 Restart=on-failure

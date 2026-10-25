@@ -233,14 +233,14 @@ def test_post_source_field(client, monkeypatch):
     assert r.status_code == 422 and "source" in r.json()["detail"]
 
 
-def test_post_screenshot_without_profiles(client, monkeypatch, no_disk):
+def test_post_screenshot_without_chessfen(client, monkeypatch, no_disk):
     import cv2
     import numpy as np
-    monkeypatch.setattr("app.vision.profiles.all_profiles", lambda: [])
+    monkeypatch.setattr("app.vision.screenshot.chessfen", None)   # as on Python < 3.13
     checker = np.kron((np.indices((8, 8)).sum(axis=0) % 2), np.ones((60, 60))).astype(np.uint8) * 120 + 100
     img = cv2.imencode(".png", cv2.cvtColor(checker, cv2.COLOR_GRAY2BGR))[1].tobytes()
     r = post(client, {"turn": "w", "source": "screenshot"}, image=img)
-    assert r.status_code == 501 and r.json()["error"] == "recognition_unavailable"
+    assert r.status_code == 501 and "Python 3.13" in r.json()["detail"]
 
 
 def test_post_flip_field(client, monkeypatch):

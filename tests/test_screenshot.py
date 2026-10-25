@@ -1,8 +1,7 @@
-"""Screenshot path, tested on synthetic phone screenshots rendered at test time from
-python-chess's board SVGs (so no third-party artwork is needed or stored)."""
+"""Screenshot path (chessfen), tested on synthetic phone screenshots rendered at test time
+from python-chess's board SVGs, so no third-party artwork is needed or stored."""
 
 import random
-from pathlib import Path
 
 import chess
 import chess.svg
@@ -11,10 +10,11 @@ import numpy as np
 import pytest
 
 from app import render
-from app.recognize import decode, recognize
+from app.recognize import recognize
 from app.vision import screenshot as ss
 
-pytestmark = pytest.mark.skipif(render.cairosvg is None, reason="needs Cairo to render boards")
+pytestmark = [pytest.mark.skipif(render.cairosvg is None, reason="needs Cairo to render boards"),
+              pytest.mark.skipif(not ss.available(), reason="chessfen needs Python 3.13+")]
 
 
 def random_position(seed: int, plies: int = 30) -> tuple[chess.Board, chess.Move | None]:
@@ -52,113 +52,143 @@ def png(img: np.ndarray) -> bytes:
     return cv2.imencode(".png", img)[1].tobytes()
 
 
-@pytest.mark.parametrize("seed, board_px, coordinates", [(1, 360, False), (2, 640, False), (3, 1000, True)])
+@pytest.mark.parametrize("seed, board_px, coordinates", [(1, 400, False), (2, 640, False), (3, 900, True)])
 def test_reads_synthetic_screenshots(seed, board_px, coordinates):
     board, last = random_position(seed)
-    rec, _ = recognize(png(phone_screenshot(board, board_px, last, coordinates)), "auto")
-    assert rec.source == "screenshot"
+    rec, size = recognize(png(phone_screenshot(board, board_px, last, coordinates)), "screenshot")
+    assert rec.source == "screenshot" and rec.orientation == "chessfen" and not rec.flipped
     assert rec.placement == board.board_fen()
-    assert rec.confidence > 0.5 and not rec.uncertain
+    assert len(rec.squares) == 64 and all(0 <= c <= 1 for c in rec.squares.values())
+    assert set(rec.uncertain) <= set(rec.squares)
 
 
-def test_locates_board_and_corners():
+def test_auto_prefers_chessfen_for_screenshots():
     board, last = random_position(4)
-    img = phone_screenshot(board, 720, last)
-    grid = ss.locate_board(img)
-    assert ss.looks_like_screenshot(grid)
-    top, left = int(img.shape[0] * 0.3), (img.shape[1] - 720) // 2
-    assert abs(grid.x0 - left) <= 1.5 and abs(grid.y0 - top) <= 1.5 and abs(grid.size - 90) <= 0.5
-
-
-def test_jpeg_screenshot_still_detected():
-    board, last = random_position(5)
-    jpeg = cv2.imencode(".jpg", phone_screenshot(board, 600, last), [cv2.IMWRITE_JPEG_QUALITY, 60])[1].tobytes()
-    rec, _ = recognize(jpeg, "auto")
+    rec, _ = recognize(png(phone_screenshot(board, 640, last)), "auto")
     assert rec.source == "screenshot" and rec.placement == board.board_fen()
 
 
-def test_camera_photo_is_not_a_screenshot():
-    photo = (Path(__file__).parent / "data" / "board.jpg").read_bytes()
-    assert not ss.looks_like_screenshot(ss.locate_board(decode(photo)))
+def test_corners_point_at_the_board():
+    board, last = random_position(5)
+    img = phone_screenshot(board, 720, last)
+    rec, _ = recognize(png(img), "screenshot")
+    top, left = int(img.shape[0] * 0.3), (img.shape[1] - 720) // 2
+    (ax, ay), _, (hx, hy), _ = rec.corners   # a8, h8, h1, a1
+    assert abs(ax - left) <= 3 and abs(ay - top) <= 3 and abs(hx - (left + 720)) <= 3 and abs(hy - (top + 720)) <= 3
 
 
-def test_empty_and_labelled_squares():
-    # Coordinate labels and highlighted squares must not be read as pieces.
-    board = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
-    rec, _ = recognize(png(phone_screenshot(board, 600, chess.Move.from_uci("e2e1"), coordinates=True)), "screenshot")
-    assert rec.placement == "4k3/8/8/8/8/8/8/4K3"
-
-
-def test_no_board_in_blank_screenshot():
-    assert ss.locate_board(np.full((1600, 740, 3), 40, np.uint8)) is None
-
-
-def test_repair_restores_a_misread_king(monkeypatch):
-    """Make the classifier prefer 'queen' on the black king's square; repair should put the
-    king back (the board would otherwise have no black king) and flag the square."""
-    board = chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1")
-    real = ss.classify
-
-    def unsure_king(sq, profiles, split=None):
-        g = real(sq, profiles, split)
-        if g.piece == "k":
-            g.piece, g.confidence = "q", 0.3
-            g.probs = {**g.probs, "q": 0.55, "k": 0.4}
-        return g
-    monkeypatch.setattr(ss, "classify", unsure_king)
-    rec, _ = recognize(png(phone_screenshot(board, 600)), "screenshot")
-    assert rec.placement == "4k3/8/8/8/8/8/8/R3K3"
-    assert rec.repairs == [{"square": "e8", "from": "q", "to": "k", "reason": "missing_king"}]
-    assert "e8" in rec.uncertain
-
-
-# --- orientation ---
-
-@pytest.mark.parametrize("seed", [21, 22, 23])
-def test_detects_board_shown_from_blacks_side(seed):
-    board, last = random_position(seed, plies=20)
-    rec, _ = recognize(png(phone_screenshot(board, 640, last, flipped=True)), "screenshot")
-    assert rec.flipped and rec.orientation == "pieces"
-    assert rec.placement == board.board_fen()
-    # a8 is now the screen's bottom-right corner
-    assert rec.corners[0][0] > rec.corners[1][0] and rec.corners[0][1] > rec.corners[2][1]
-
-
-def test_normal_board_is_not_flipped():
-    board, last = random_position(24, plies=20)
-    rec, _ = recognize(png(phone_screenshot(board, 640, last)), "screenshot")
-    assert not rec.flipped and rec.orientation == "pieces" and rec.placement == board.board_fen()
-
-
-def test_labels_decide_when_pieces_cannot(monkeypatch):
-    from tests.test_calibrate import noto_board
-    from app import calibrate, config
-    import tempfile
-    monkeypatch.setattr(config, "PROFILES_DIR", tempfile.mkdtemp())
-    calibrate.calibrate(png(noto_board(chess.STARTING_BOARD_FEN)), "noto")
-    endgame = "8/8/4k3/8/8/3KR3/8/8"   # no pawns: the pieces alone can't tell
-    for flipped in (False, True):
-        rec, _ = recognize(png(noto_board(endgame, square=110, flipped=flipped, labels=True)), "screenshot")
-        assert (rec.flipped, rec.orientation, rec.placement) == (flipped, "labels", endgame)
-
-
-def test_no_evidence_keeps_white_at_the_bottom():
-    board = chess.Board("8/8/8/2k1K3/8/8/8/8 w - - 0 1")   # kings side by side: no clue either way
-    rec, _ = recognize(png(phone_screenshot(board, 600)), "screenshot")
-    assert (rec.flipped, rec.orientation) == (False, "default")
-
-
-def test_flip_can_be_forced():
-    board, last = random_position(25, plies=20)
-    data = png(phone_screenshot(board, 600, last, flipped=True))
-    rec, _ = recognize(data, "screenshot", flip=True)
-    assert rec.placement == board.board_fen() and rec.orientation == "requested"
-    rec, _ = recognize(data, "screenshot", flip=False)
+def test_flip_field_and_chessfen_guess():
+    board, last = random_position(6, plies=20)
+    data = png(phone_screenshot(board, 640, last, flipped=True))
+    rec, _ = recognize(data, "screenshot")                 # chessfen guesses Black is at the bottom
+    assert (rec.flipped, rec.orientation, rec.placement) == (True, "chessfen", board.board_fen())
+    rec, _ = recognize(data, "screenshot", flip=True)      # forced
+    assert (rec.flipped, rec.orientation, rec.placement) == (True, "requested", board.board_fen())
+    assert rec.corners[0][0] > rec.corners[1][0]           # a8 is now the bottom-right corner
+    rec, _ = recognize(data, "screenshot", flip=False)     # forced the wrong way: the board comes out rotated
     assert rec.placement == board.transform(chess.flip_vertical).transform(chess.flip_horizontal).board_fen()
 
 
-def test_piece_orientation_rules():
-    start = ss.expand(chess.STARTING_BOARD_FEN)
-    assert ss.piece_orientation(start) is False and ss.piece_orientation(start[::-1]) is True
-    assert ss.piece_orientation(ss.expand("8/8/8/2k1K3/8/8/8/8")) is None
-    assert ss.piece_orientation(ss.expand("8/8/4k3/8/8/3K4/8/8")) is False   # White's king clearly lower
+def test_reads_the_cropped_board_first(monkeypatch):
+    """chessfen gets a crop around the board found by its checker pattern; the whole
+    screenshot is only the fallback. Corners are reported in full-image pixels."""
+    board, last = random_position(7)
+    img = phone_screenshot(board, 640, last)
+    real = ss.chessfen.recognize
+    seen = []
+
+    def spy(arr, **kw):
+        seen.append(arr.shape[:2])
+        return real(arr, **kw)
+    monkeypatch.setattr(ss.chessfen, "recognize", spy)
+    rec, _ = recognize(png(img), "screenshot")
+    assert len(seen) == 1 and seen[0][0] < img.shape[0] / 2   # one call, on the crop
+    assert rec.placement == board.board_fen()
+    assert abs(rec.corners[0][1] - int(img.shape[0] * 0.3)) <= 3
+
+
+def test_whole_image_when_the_crop_fails(monkeypatch):
+    board, last = random_position(11)
+    img = phone_screenshot(board, 640, last)
+    real = ss.chessfen.recognize
+
+    def picky(arr, **kw):
+        if arr.shape[:2] != img.shape[:2]:
+            raise ss.chessfen.BoardNotFoundError("crop rejected")
+        return real(arr, **kw)
+    monkeypatch.setattr(ss.chessfen, "recognize", picky)
+    rec, _ = recognize(png(img), "screenshot")
+    assert rec.placement == board.board_fen()
+
+
+def test_doubtful_squares_are_kept_not_rerouted(monkeypatch):
+    """A screenshot chessfen is unsure about stays with chessfen; the doubtful squares
+    come back as uncertain for the correction view (no fallback to the photo model)."""
+    from app import recognize as rz
+    board, last = random_position(8)
+    real = ss.chessfen.recognize
+
+    def unsure(arr, **kw):
+        r = real(arr, **kw)
+        from chessfen.classify import SquareVerdict
+        verdicts = {sq: (SquareVerdict(v.piece, v.score, 0.0, v.color_margin) if v.piece else v) for sq, v in r.verdicts.items()}
+        return type(r)(board=r.board, rect=r.rect, orientation=r.orientation, verdicts=verdicts)
+    monkeypatch.setattr(ss.chessfen, "recognize", unsure)
+    monkeypatch.setattr(rz, "_get_recognizer", lambda: pytest.fail("photo model must not be used"))
+    rec, _ = recognize(png(phone_screenshot(board, 640, last)), "auto")
+    assert rec.source == "screenshot" and rec.placement == board.board_fen()
+    assert len(rec.uncertain) == len(board.piece_map()) and all(rec.squares[s] < 0.6 for s in rec.uncertain)
+
+
+def test_photos_skip_chessfen(monkeypatch):
+    from pathlib import Path
+    from app import recognize as rz
+    camera = rz.Recognition(placement="8/8/8/8/8/8/8/8", confidence=0.5, squares={}, uncertain=[], repairs=[],
+                            alternatives={}, corners=[[0, 0], [1, 0], [1, 1], [0, 1]])
+    monkeypatch.setattr(rz, "_get_recognizer", lambda: type("M", (), {"recognize": lambda self, img: camera})())
+    monkeypatch.setattr(ss.chessfen, "recognize", lambda *a, **k: pytest.fail("chessfen must not run on photos"))
+    photo = (Path(__file__).parent / "data" / "board.jpg").read_bytes()
+    rec, _ = recognize(photo, "auto")
+    assert rec is camera
+
+
+def test_unreadable_screenshot_falls_back_to_the_photo_model(monkeypatch):
+    from app import recognize as rz
+    board, last = random_position(12)
+    camera = rz.Recognition(placement="8/8/8/8/8/8/8/8", confidence=0.5, squares={}, uncertain=[], repairs=[],
+                            alternatives={}, corners=[[0, 0], [1, 0], [1, 1], [0, 1]])
+    monkeypatch.setattr(rz, "_get_recognizer", lambda: type("M", (), {"recognize": lambda self, img: camera})())
+
+    def broken(*a, **k):
+        raise ss.chessfen.BoardNotFoundError("no")
+    monkeypatch.setattr(ss.chessfen, "recognize", broken)
+    data = png(phone_screenshot(board, 640, last))
+    assert recognize(data, "auto")[0] is camera
+    with pytest.raises(rz.BoardNotFound):
+        recognize(data, "screenshot")
+
+
+def test_screenshot_stays_in_memory(monkeypatch):
+    import builtins, io, os, tempfile
+    board, last = random_position(9)
+    data = png(phone_screenshot(board, 640, last))
+    recognize(data, "screenshot")   # warm up (chessfen renders its templates once, in memory)
+
+    def boom(*a, **k):
+        raise AssertionError(f"touched the disk: {a[:1]}")
+    for mod, names in ((builtins, ("open",)), (io, ("open",)), (os, ("open",)),
+                       (tempfile, ("TemporaryFile", "NamedTemporaryFile", "SpooledTemporaryFile", "mkstemp", "mkdtemp"))):
+        for name in names:
+            monkeypatch.setattr(mod, name, boom)
+    rec, _ = recognize(data, "screenshot")
+    assert rec.placement == board.board_fen()
+
+
+def test_square_confidence_matches_chessfen_doubt():
+    from chessfen.classify import SquareVerdict
+    knight = chess.Piece(chess.KNIGHT, chess.WHITE)
+    sure = SquareVerdict(piece=knight, score=0.9, margin=0.2, color_margin=0.4)
+    shaky = SquareVerdict(piece=knight, score=0.9, margin=0.01, color_margin=0.4)
+    assert sure.confident and ss.square_confidence(sure) >= 0.6
+    assert not shaky.confident and ss.square_confidence(shaky) < 0.6
+    assert ss.square_confidence(SquareVerdict(piece=None, score=0.0, margin=1.0, color_margin=1.0)) == 1.0
