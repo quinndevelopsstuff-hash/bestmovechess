@@ -103,7 +103,8 @@ class Recognizer:
             gr, gc = divmod(int(cell[r, c]), 8)
             # Of that corner square's four grid points, the board corner is the one farthest from the centre.
             cand = [pts[gr + a, gc + b] for a in (0, 1) for b in (0, 1)]
-            corners.append(max(cand, key=lambda p: np.linalg.norm(p - pts[4, 4])).round(1).tolist())
+            corner = max(cand, key=lambda p: np.linalg.norm(p - pts[4, 4]))
+            corners.append([round(float(v), 1) for v in corner])
 
         alternatives = {}
         for name, conf in squares.items():

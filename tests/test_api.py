@@ -207,3 +207,12 @@ def test_post_no_board_in_photo(client, no_disk):
     r = post(client, image=blank)
     assert r.status_code == 422
     assert r.json()["error"] == "board_not_found"
+
+
+def test_post_game_over_returns_detection(client, fake_recognizer):
+    fake_recognizer("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR", 0.9)  # fool's mate
+    r = post(client, {"turn": "w"})
+    assert r.status_code == 422
+    body = r.json()
+    assert body["error"] == "game_over"
+    assert body["detected"] and body["fen"].startswith("rnb1kbnr/")

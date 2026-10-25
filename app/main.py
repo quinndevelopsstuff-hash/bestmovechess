@@ -123,10 +123,11 @@ def parse_fen(fen: str, extra: dict | None = None) -> chess.Board:
 
 
 async def best_move(request: Request, board: chess.Board, depth: int, extra: dict | None = None) -> dict:
+    over = {**extra, "fen": board.fen()} if extra else None
     if board.is_checkmate():
-        raise APIError(422, "game_over", "no legal moves: checkmate", extra)
+        raise APIError(422, "game_over", "no legal moves: checkmate", over)
     if board.is_stalemate():
-        raise APIError(422, "game_over", "no legal moves: stalemate", extra)
+        raise APIError(422, "game_over", "no legal moves: stalemate", over)
     try:
         info = await request.app.state.engine.analyse(board, depth)
     except EngineUnavailable as exc:
@@ -167,7 +168,26 @@ async def get_move(
 _CASTLING_RE = re.compile(r"^(-|K?Q?k?q?)$")
 
 
-@app.post("/move")
+# The body is parsed by hand (to keep uploads in memory), so describe it for /docs explicitly.
+_POST_MOVE_FORM = {
+    "requestBody": {
+        "required": True,
+        "content": {"multipart/form-data": {"schema": {
+            "type": "object",
+            "required": ["image", "turn"],
+            "properties": {
+                "image": {"type": "string", "format": "binary", "description": "Photo of the board (JPEG/PNG/WebP)"},
+                "turn": {"type": "string", "enum": ["w", "b"], "description": "Side to move"},
+                "castling": {"type": "string", "default": "-", "description": "Subset of KQkq, or -"},
+                "ep": {"type": "string", "description": "En passant file a-h, if any"},
+                "depth": {"type": "integer", "minimum": 1, "maximum": config.MAX_DEPTH},
+            },
+        }}},
+    }
+}
+
+
+@app.post("/move", openapi_extra=_POST_MOVE_FORM)
 async def post_move(request: Request):
     """Multipart form: image (file), turn=w|b, optional castling (e.g. "KQkq" or "-"),
     optional ep (en passant file a-h), optional depth."""

@@ -36,71 +36,20 @@ in the browser before upload, which also strips EXIF data such as location.
 
 ## API
 
-### `GET /move?fen=<FEN>&depth=<1-25>`
-
-`depth` is optional (default 15; the maximum is set by `MAX_DEPTH`).
-
-```json
-{"best": "e7e5", "san": "e5", "eval": 0.2, "mate": null, "depth": 18,
- "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"}
-```
-
-- `eval` is in pawns from White's point of view. When the engine finds a forced
-  mate, `eval` is `null` and `mate` is the number of moves to mate
-  (positive = White mates, negative = Black mates).
-- Each search is also capped by wall-clock time (`ENGINE_MAX_SECONDS`), so on slow
-  hardware the returned `depth` can be lower than requested.
-
-### `POST /move` (photo)
-
-`multipart/form-data` with:
-
-| Field      | Required | Meaning                                                         |
-|------------|----------|-----------------------------------------------------------------|
-| `image`    | yes      | Photo of the board, at most 10 MB (`MAX_UPLOAD_MB`)             |
-| `turn`     | yes      | `w` or `b`, the side to move                                    |
-| `castling` | no       | Castling rights still available, e.g. `KQkq`, `Kq`; default `-` |
-| `ep`       | no       | En passant file `a`-`h` if the last move was a double pawn push |
-| `depth`    | no       | As for `GET`                                                    |
-
-Returns the same fields as `GET /move`, plus:
-
-| Field        | Meaning                                                                  |
-|--------------|--------------------------------------------------------------------------|
-| `detected`   | Recognised piece placement (first FEN field)                             |
-| `confidence` | 0-1 estimate that the whole board is right (see below)                   |
-| `squares`    | Per-square model confidence, e.g. `{"e4": 0.95, ...}`                    |
-| `uncertain`  | Squares the model is unsure about                                        |
-| `repairs`    | Squares changed to make the position legal (e.g. a second white king)    |
-| `alternatives` | For squares below 0.9: the model's top guesses, `[["n", 0.7], ["b", 0.2]]` (`.` = empty) |
-| `corners`    | Image pixels of the board's a8, h8, h1, a1 corners                       |
-| `image_size` | `[width, height]` those coordinates refer to                             |
-
-If the recognised position is illegal, the 422 error still includes `fen` and the
-fields above, so the page can show what was detected.
+Full reference: **[docs/API.md](docs/API.md)**. Interactive docs are at `/docs`.
 
 ```sh
+# Best move for a FEN
+curl -G http://127.0.0.1:8000/move --data-urlencode 'fen=rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
+# {"best":"c7c5","san":"c5","eval":0.32,"mate":null,"depth":15,"fen":"..."}
+
+# Best move for a photo (plus the detected position and its confidence)
 curl -F image=@board.jpg -F turn=w http://127.0.0.1:8000/move
+# {"best":"c6d5","san":"Bd5",...,"detected":"1q1r4/r3b1k1/...","confidence":1.0,...}
 ```
 
-### Errors
-
-Errors are always JSON: `{"error": "<code>", "detail": "<message>"}`.
-
-| Status | `error`              | When                                              |
-|-------:|----------------------|---------------------------------------------------|
-| 400    | `invalid_fen`        | The FEN can't be parsed                           |
-| 422    | `illegal_position`   | Parses, but isn't a legal position (e.g. no king) |
-| 422    | `game_over`          | Checkmate or stalemate, so there's no move        |
-| 422    | `invalid_request`    | Missing or out-of-range parameter                 |
-| 422    | `board_not_found`    | No chessboard found in the photo                  |
-| 413    | `too_large`          | Upload bigger than `MAX_UPLOAD_MB`                |
-| 415    | `unsupported_media_type` | `POST` body isn't `multipart/form-data`       |
-| 415    | `invalid_image`      | The upload isn't a JPEG/PNG/WebP image            |
-| 501    | `recognition_unavailable` | Model file missing (run the download script) |
-| 503    | `engine_unavailable` | Stockfish isn't installed or crashed              |
-
-`GET /healthz` returns `{"ok": true}`.
+Errors are JSON: `{"error": "invalid_fen", "detail": "..."}`. There is no
+authentication, so keep the app on localhost or a private network.
 
 ## Setup
 
