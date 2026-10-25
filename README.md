@@ -177,6 +177,14 @@ the frame. **Always check the detected position before trusting the move.**
 Tips: shoot from above or from White's side, fill most of the frame with the board,
 and avoid strong reflections.
 
+### Measuring recognition
+
+`python -m app.evaluate` runs the recognizer over local fixtures and prints per-square
+accuracy, accuracy by piece type, and a confusion table. A fixture is an image in
+`tests/fixtures/` plus a `.fen` sidecar with the expected piece placement; see
+`tests/fixtures/README.md`. Fixtures are gitignored and never committed, since
+screenshots can contain third-party artwork.
+
 ### Credits
 
 - Recognition model and the detection/cropping code in `app/vision/`:
