@@ -177,8 +177,9 @@ lists what this server has. All models answer with the same JSON, plus `model` i
   to play the move a player of that rating would make, so it makes human mistakes instead
   of strongest moves. It runs in [Leela Chess Zero](https://lczero.org/) with one node of
   search (as Maia's authors recommend), so `depth` is ignored and the `eval` is the
-  network's own judgement, not a search result. Install lc0 (a build for your CPU; on a Pi
-  you will probably have to compile it, and I haven't tested that), download
+  network's own judgement, not a search result. The easy way on a Pi or Debian/Ubuntu box:
+  `sudo bash scripts/install_models.sh` builds lc0 (CPU/OpenBLAS, takes several minutes) and
+  downloads all nine nets (written but not yet run on a Pi). By hand: install lc0 (a build for your CPU), download
   `maia-1100.pb.gz` … `maia-1900.pb.gz` from the [maia-chess releases](https://github.com/CSSLab/maia-chess),
   put them in `MAIA_DIR`, and set `LC0_PATH` if `lc0` isn't on `PATH`. Models that aren't
   installed answer `501 model_unavailable`.
