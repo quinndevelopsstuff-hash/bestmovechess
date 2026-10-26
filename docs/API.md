@@ -11,13 +11,17 @@ The same app that serves the web page serves a small JSON API.
 - **Interactive docs:** `/docs` (Swagger UI) and `/openapi.json` are served by the app,
   and you can try both endpoints from `/docs`, including photo uploads.
 
-| Method | Path       | Purpose                                     |
-|--------|------------|---------------------------------------------|
-| GET    | `/move`    | Best move for a position given as FEN       |
-| POST   | `/move`    | Recognise a board photo, then best move     |
-| GET    | `/img`     | PNG/SVG diagram of a position and best move |
-| GET    | `/img/error` | PNG/SVG image explaining an error code    |
-| GET    | `/healthz` | Liveness check                              |
+| Method | Path              | Purpose                                              |
+|--------|-------------------|------------------------------------------------------|
+| GET    | `/move`           | Best move for a position given as FEN                |
+| POST   | `/move`           | Recognise a board photo or screenshot, then best move |
+| GET    | `/models`         | The move models this server has (`model` values)     |
+| GET    | `/profiles`       | Saved screenshot calibration profiles                |
+| POST   | `/profiles`       | Make a calibration profile from a start-position screenshot |
+| DELETE | `/profiles/{name}` | Delete a calibration profile                        |
+| GET    | `/img`            | PNG/SVG diagram of a position and best move          |
+| GET    | `/img/error`      | PNG/SVG image explaining an error code               |
+| GET    | `/healthz`        | Liveness check                                       |
 
 ## Conventions
 
@@ -26,6 +30,10 @@ The same app that serves the web page serves a small JSON API.
   `san` is the same move in standard algebraic notation (`Nf3`, `O-O`, `Qxf7#`).
 - **`eval`** is in pawns from **White's** point of view: `+1.5` means White is ahead by
   about a pawn and a half, whichever side is to move.
+- **Models**: which engine picks the move is the `model` parameter (see
+  [Move models](#move-models)). With a human-like model such as Maia, `best` is the move
+  a player of that rating would likely play, not the strongest one, and `eval` is the
+  network's own judgement rather than the result of a search.
 - **`mate`**: when the engine finds a forced mate, `eval` is `null` and `mate` is the
   number of moves to mate, positive if White mates and negative if Black mates.
   Otherwise `mate` is `null`.
@@ -39,9 +47,9 @@ Best move for a position.
 | Query param | Required | Default | Meaning                                       |
 |-------------|----------|---------|-----------------------------------------------|
 | `fen`       | yes      |         | Full FEN (all six fields recommended)         |
-| `depth`     | no       | `15`    | Search depth, 1 to `MAX_DEPTH` (default 25)   |
-| `model`     | no       | `stockfish` | Move model: `stockfish`, `maia-1100`…`maia-1900`, or a custom one. See `GET /models` |
-| `elo`       | no       |         | `stockfish` only: play at this rating, 1320–3190 |
+| `depth`     | no       | `15`    | Search depth, 1 to `MAX_DEPTH` (default 25). Ignored by one-node models such as Maia |
+| `model`     | no       | `stockfish` | Move model: `stockfish`, `maia-1100` … `maia-1900`, or a custom one (see [Move models](#move-models)) |
+| `elo`       | no       |         | `stockfish` only: play at this human rating, 1320–3190 |
 
 Each search is also capped at `ENGINE_MAX_SECONDS` (default 10 s), so on slow hardware
 the returned `depth` can be lower than requested. Remember to URL-encode the FEN: its
@@ -54,15 +62,27 @@ curl -G http://127.0.0.1:8000/move \
 ```
 
 ```json
-{"best": "c7c5", "san": "c5", "eval": 0.32, "mate": null, "depth": 12,
+{"best": "c7c5", "san": "c5", "eval": 0.32, "mate": null, "depth": 12, "model": "stockfish",
  "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"}
 ```
 
 A forced mate:
 
 ```json
-{"best": "a1a8", "san": "Ra8#", "eval": null, "mate": 1, "depth": 10,
+{"best": "a1a8", "san": "Ra8#", "eval": null, "mate": 1, "depth": 10, "model": "stockfish",
  "fen": "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"}
+```
+
+At a human rating (`elo=1500`) or with another model:
+
+```sh
+curl -G http://127.0.0.1:8000/move --data-urlencode 'fen=...' -d elo=1500
+curl -G http://127.0.0.1:8000/move --data-urlencode 'fen=...' -d model=maia-1500
+```
+
+```json
+{"best": "e7e5", "san": "e5", "eval": 0.29, "mate": null, "depth": 12, "model": "stockfish",
+ "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", "elo": 1500}
 ```
 
 | Field   | Type          | Meaning                                       |
@@ -76,15 +96,68 @@ A forced mate:
 | `elo`   | int           | Only when `elo` was requested                 |
 | `fen`   | string        | The position analysed, normalised             |
 
-## GET /models
+## Move models
 
-Lists the move models: `{"default": "stockfish", "elo_range": [1320, 3190], "models": [{"name", "label", "description", "installed", "human_like", "supports_elo", "uses_depth", "unavailable"?}]}`.
-`unavailable` says what is missing when `installed` is false. Maia models need lc0 and
-weights; see the README ("Move models").
+`GET /move` and `POST /move` choose the engine with `model` (default `stockfish`). Every
+model answers with the same JSON, and the response's `model` says which one did.
+
+| `model`                  | What it is | Needs |
+|--------------------------|------------|-------|
+| `stockfish`              | The default: strongest play. Add `elo` (1320–3190) to make it play at a human rating, using Stockfish's own strength limit | Stockfish (required by the app) |
+| `maia-1100`, `maia-1200`, `maia-1300`, `maia-1400`, `maia-1500`, `maia-1600`, `maia-1700`, `maia-1800`, `maia-1900` | [Maia](https://www.maiachess.com/): a network trained on human games to play the move a player of that rating would, mistakes included. Runs in Leela Chess Zero (lc0) with one node of search, so `depth` is ignored and `eval` is the network's own judgement | `lc0` (`LC0_PATH`) and the `maia-<rating>.pb.gz` weights in `MAIA_DIR` |
+| any name you add         | Any UCI engine registered in `UCI_ENGINES` (for example Rodent IV, or a Komodo you own) | The engine itself |
+
+- **`elo`** only works with `stockfish`. With any other model it is a `422 invalid_request`,
+  because those models have their own level. It must be a whole number from 1320 to 3190,
+  Stockfish's own limits. It applies to that request only.
+- **Not installed**: a model that exists but isn't set up on this server answers
+  `501 model_unavailable`, and `detail` says what is missing (for example that lc0 isn't
+  installed). `GET /models` shows which models are installed.
+- **Unknown names** answer `422 unknown_model`.
+- Ratings are rough guides. Maia's number is the level of players it was trained on;
+  Stockfish's `elo` is on its own scale and doesn't match Lichess or Chess.com ratings
+  exactly.
+- Each model runs as its own engine process, started on first use. At most
+  `MAX_LIVE_ENGINES` (default 2) non-default engines stay running; the least recently
+  used one is stopped when another is needed.
+
+Setup for Maia and custom engines is in the README ("Move models").
+
+### GET /models
+
+Lists every model this server knows about and whether it can be used.
+
+```sh
+curl http://127.0.0.1:8000/models
+```
+
+```json
+{"default": "stockfish", "elo_range": [1320, 3190],
+ "models": [
+  {"name": "stockfish", "label": "Stockfish", "description": "Strongest play. Add elo=1320-3190 for a human-rated Stockfish.",
+   "installed": true, "human_like": false, "supports_elo": true, "uses_depth": true},
+  {"name": "maia-1500", "label": "Maia 1500", "description": "Predicts the move a ~1500-rated human would play (human-like, not strongest).",
+   "installed": false, "human_like": true, "supports_elo": false, "uses_depth": false,
+   "unavailable": "lc0 (Leela Chess Zero) isn't installed; set LC0_PATH"}
+ ]}
+```
+
+| Field          | Type    | Meaning |
+|----------------|---------|---------|
+| `default`      | string  | The model used when `model` is omitted |
+| `elo_range`    | array   | `[min, max]` accepted by `elo` |
+| `name`         | string  | The value to send as `model` |
+| `label`, `description` | string | For display |
+| `installed`    | bool    | Whether it can be used on this server right now |
+| `human_like`   | bool    | Plays like a human of some level rather than as strongly as possible |
+| `supports_elo` | bool    | Whether the `elo` parameter works with it |
+| `uses_depth`   | bool    | Whether `depth` affects it (false for one-node models) |
+| `unavailable`  | string  | Only when `installed` is false: what is missing |
 
 ## POST /move
 
-Recognises the position in a photo of a physical board, then returns the best move.
+Recognises the position in a photo of a physical board or a screenshot of a chess app,
+then returns the best move.
 Send `multipart/form-data`:
 
 | Field      | Required | Meaning                                                              |
@@ -93,7 +166,7 @@ Send `multipart/form-data`:
 | `turn`     | yes      | `w` or `b`, the side to move (a photo can't show it)                 |
 | `castling` | no       | Castling rights still available, a subset of `KQkq` in that order (e.g. `Kq`), or `-`. Default `-` |
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
-| `depth`    | no       | As for `GET`                                                         |
+| `depth`    | no       | As for `GET /move`                                                   |
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
 | `model`    | no       | As for `GET /move`: `stockfish` (default), `maia-*`, or a custom model |
 | `elo`      | no       | As for `GET /move` (`stockfish` only)                                |
@@ -105,11 +178,14 @@ Castling and en passant default to none because they can't be seen in a photo.
 
 ```sh
 curl -F image=@board.jpg -F turn=w -F depth=12 http://127.0.0.1:8000/move
+
+# a screenshot, read at a human rating
+curl -F image=@screenshot.png -F turn=w -F source=screenshot -F model=maia-1500 http://127.0.0.1:8000/move
 ```
 
 ```json
 {
-  "best": "c6d5", "san": "Bd5", "eval": 1.74, "mate": null, "depth": 12,
+  "best": "c6d5", "san": "Bd5", "eval": 1.74, "mate": null, "depth": 12, "model": "stockfish",
   "fen": "1q1r4/r3b1k1/p1B1Q1p1/1pp5/2P2P2/2N3P1/PP3P2/R5K1 w - - 0 1",
   "detected": "1q1r4/r3b1k1/p1B1Q1p1/1pp5/2P2P2/2N3P1/PP3P2/R5K1",
   "confidence": 1.0,
@@ -118,11 +194,12 @@ curl -F image=@board.jpg -F turn=w -F depth=12 http://127.0.0.1:8000/move
   "repairs": [],
   "alternatives": {},
   "corners": [[281.9, 137.0], [646.2, 130.6], [654.8, 499.8], [281.2, 502.3]],
-  "image_size": [900, 600]
+  "image_size": [900, 600],
+  "source": "camera", "flipped": false, "orientation": null, "profile": null
 }
 ```
 
-It returns every field of `GET /move`, plus:
+It returns every field of `GET /move` (including `model`, and `elo` if you sent one), plus:
 
 | Field          | Type   | Meaning |
 |----------------|--------|---------|
@@ -313,6 +390,9 @@ curl -G https://<your-host>/img/error -o error.png -d code=missing_king \
 | `invalid_fen` | Invalid FEN |
 | `engine_unavailable` | Engine error |
 | `invalid_request` | Bad request |
+| `unknown_model` | Unknown model |
+| `model_unavailable` | Model not installed |
+| `unknown_profile` | Unknown profile |
 | `too_large` | Image too large |
 
 The message text comes from a fixed table, and nothing from the request is drawn as
@@ -324,7 +404,7 @@ text. It always returns status 200.
 {"ok": true}
 ```
 
-It reports that the web server is up. It doesn't check Stockfish or the model.
+It reports that the web server is up. It doesn't check the chess engines or the photo model; use `GET /models` to see which move models are installed.
 
 ## Errors
 
@@ -337,22 +417,24 @@ It reports that the web server is up. It doesn't check Stockfish or the model.
 | 413    | `too_large`               | Upload over `MAX_UPLOAD_MB`, or a text field over 1 KB |
 | 415    | `unsupported_media_type`  | `POST /move` body isn't `multipart/form-data` |
 | 415    | `invalid_image`           | The upload isn't a decodable JPEG/PNG/WebP, or exceeds `MAX_IMAGE_PIXELS` |
-| 422    | `invalid_request`         | Missing or invalid parameter (`detail` names it, e.g. `depth: Input should be less than or equal to 25`) |
+| 422    | `invalid_request`         | Missing or invalid parameter (`detail` names it, e.g. `depth: Input should be less than or equal to 25`, `elo: must be between 1320 and 3190`) |
 | 422    | `illegal_position`        | Valid FEN syntax but impossible position; `detail` says why (e.g. `Black has no king`) |
 | 422    | `game_over`               | Checkmate or stalemate: no move to suggest |
 | 422    | `board_not_found`         | No chessboard found in the photo |
 | 422    | `unknown_model`           | `model` isn't one of `GET /models` |
-| 501    | `model_unavailable`       | The model exists but isn't installed on this server (`detail` says what's missing) |
 | 422    | `unknown_profile`         | `profile` names a calibration profile that doesn't exist |
 | 422    | `calibration_failed`      | `POST /profiles`: the screenshot isn't a clean start position |
 | 409    | `too_many_profiles`       | `POST /profiles`: the limit of 12 is reached |
-| 501    | `recognition_unavailable` | Model file missing (`python scripts/download_model.py`) |
-| 503    | `engine_unavailable`      | Stockfish missing or crashed (it restarts automatically on the next request) |
+| 404    | `unknown_profile`         | `DELETE /profiles/{name}`: no such profile |
+| 501    | `model_unavailable`       | The model exists but isn't installed on this server (`detail` says what's missing) |
+| 501    | `recognition_unavailable` | Photo model file missing (`python scripts/download_model.py`), or screenshot/calibration needs Python 3.13+ |
+| 503    | `engine_unavailable`      | The chess engine is missing or crashed (it restarts automatically on the next request) |
 
 ## Limits and performance
 
-- Requests share one Stockfish process, so searches run one at a time. A slow,
-  deep request delays the others.
+- Each model runs as one engine process shared by all requests, so searches with the
+  same model run one at a time (different models can search at once). A slow, deep
+  request delays the others using that model.
 - Search time is at most `ENGINE_MAX_SECONDS` (default 10 s). Lower `depth` for faster
   answers.
 - Recognising a photo took 0.5–1 s per image on a desktop-class CPU in testing; expect
@@ -371,6 +453,11 @@ BASE = "http://127.0.0.1:8000"
 
 r = requests.get(f"{BASE}/move", params={"fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4"})
 print(r.json()["san"])  # Qxf7#
+
+# a human-rated Stockfish, and the list of models
+r = requests.get(f"{BASE}/move", params={"fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", "elo": 1500})
+print(r.json()["model"], r.json()["elo"])
+print([m["name"] for m in requests.get(f"{BASE}/models").json()["models"] if m["installed"]])
 
 with open("board.jpg", "rb") as f:
     r = requests.post(f"{BASE}/move", files={"image": f}, data={"turn": "w"})
