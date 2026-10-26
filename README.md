@@ -159,7 +159,37 @@ All settings are environment variables (see `deploy/bestmovechess.env.example`):
 | `MAX_IMAGE_PIXELS`   | `50000000`                  | Refuse to decode larger images           |
 | `PUBLIC_BASE_URL`    | unset                       | Base for absolute links such as `image_url`, e.g. `https://chess.example.ts.net` |
 | `LOG_LEVEL`          | `INFO`                      | Python log level                         |
+| `LC0_PATH`           | `lc0` on `PATH`             | Leela Chess Zero binary, needed for the `maia-*` models |
+| `LC0_BACKEND`        | lc0's default               | lc0 backend, e.g. `blas` or `eigen` for CPU-only boards |
+| `MAIA_DIR`           | `./models/maia`             | Folder holding `maia-1100.pb.gz` … `maia-1900.pb.gz` |
+| `UCI_ENGINES`        | unset                       | Extra UCI engines as JSON (see "Move models") |
+| `MAX_LIVE_ENGINES`   | `2`                         | Non-default engines kept running at once |
 | `PROFILE_DIR`        | `./profiles`                | Where calibration profiles (tiny `.npz` piece-shape files) are saved |
+
+## Move models
+
+`GET /move` and `POST /move` take a `model` parameter (default `stockfish`); `GET /models`
+lists what this server has. All models answer with the same JSON, plus `model` in the response.
+
+- **`stockfish`**: strongest play. Add `elo=1320`–`3190` to make it play at a human rating
+  (Stockfish's built-in strength limit). Works with nothing extra installed.
+- **`maia-1100` … `maia-1900`**: [Maia](https://www.maiachess.com/), trained on human games
+  to play the move a player of that rating would make, so it makes human mistakes instead
+  of strongest moves. It runs in [Leela Chess Zero](https://lczero.org/) with one node of
+  search (as Maia's authors recommend), so `depth` is ignored and the `eval` is the
+  network's own judgement, not a search result. Install lc0 (a build for your CPU; on a Pi
+  you will probably have to compile it, and I haven't tested that), download
+  `maia-1100.pb.gz` … `maia-1900.pb.gz` from the [maia-chess releases](https://github.com/CSSLab/maia-chess),
+  put them in `MAIA_DIR`, and set `LC0_PATH` if `lc0` isn't on `PATH`. Models that aren't
+  installed answer `501 model_unavailable`.
+- **Your own**: any UCI engine, e.g. Rodent IV, or Komodo/HIARCS/Shredder if you own a copy.
+  Set `UCI_ENGINES` to JSON like
+  `{"rodent": {"path": "/opt/rodent/rodent", "label": "Rodent IV", "options": {"Hash": 32}, "human_like": true}}`
+  (`search` may be `"nodes1"` for one-node models; default is a depth search).
+
+Engines start on first use and stay running; beyond `MAX_LIVE_ENGINES` the least recently
+used one is stopped. Engines that are paid or only exist as websites or apps (Chessiverse,
+Allie, Chess.com's bots) can't be plugged in.
 
 ## How recognition works
 

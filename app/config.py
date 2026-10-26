@@ -45,3 +45,14 @@ PROFILE_DIR = os.environ.get(
     "PROFILE_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles"),
 )
+# Move models (see app/models.py). lc0 + Maia weights enable the maia-* models.
+LC0_PATH = os.environ.get("LC0_PATH", "").strip()
+LC0_BACKEND = os.environ.get("LC0_BACKEND", "").strip()   # e.g. blas / eigen; empty = lc0's default
+MAIA_DIR = os.environ.get(
+    "MAIA_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "maia"),
+)
+# Extra UCI engines as JSON, e.g. {"rodent": {"path": "/opt/rodent/rodent", "label": "Rodent IV"}}
+UCI_ENGINES = os.environ.get("UCI_ENGINES", "")
+# Non-default engines kept running at once; the least recently used is stopped beyond this.
+MAX_LIVE_ENGINES = _int("MAX_LIVE_ENGINES", 2)

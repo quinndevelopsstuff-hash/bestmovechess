@@ -72,6 +72,12 @@
             <option value="camera">Camera photo</option>
           </select>
         </label>
+        <label>Move engine
+          <select id="model"><option value="stockfish" selected>Stockfish (strongest)</option></select>
+        </label>
+        <label>Rating (Stockfish only)
+          <input type="number" id="elo" min="1320" max="3190" step="10" placeholder="full strength" inputmode="numeric">
+        </label>
         <label>Depth
           <select id="depth">
             <option value="10">10 (fast)</option>

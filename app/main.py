@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, render
+from . import config, models, render
 from .engine import Engine, EngineUnavailable
 from . import recognize as recognition
 from .recognize import SOURCES, BoardNotFound, InvalidImage, RecognitionUnavailable, UnknownProfile, recognize
@@ -129,31 +129,54 @@ def check_position(board: chess.Board, extra: dict | None = None) -> chess.Board
     return board
 
 
-async def best_move(request: Request, board: chess.Board, depth: int, extra: dict | None = None) -> dict:
+def choose_model(model: str | None, elo: str | int | None) -> tuple[models.ModelSpec, int | None]:
+    """Validate the `model` and `elo` request fields."""
+    try:
+        spec = models.resolve(model)
+    except models.UnknownModel as exc:
+        raise APIError(422, "unknown_model", str(exc)) from None
+    except models.ModelUnavailable as exc:
+        raise APIError(501, "model_unavailable", str(exc)) from None
+    if elo in (None, ""):
+        return spec, None
+    try:
+        elo = int(elo)
+    except ValueError:
+        elo = 0
+    if not models.MIN_ELO <= elo <= models.MAX_ELO:
+        raise APIError(422, "invalid_request", f"elo: must be between {models.MIN_ELO} and {models.MAX_ELO}")
+    if not spec.supports_elo:
+        raise APIError(422, "invalid_request", f"elo: only the stockfish model takes an elo (the {spec.name} model has its own level)")
+    return spec, elo
+
+
+async def best_move(request: Request, board: chess.Board, depth: int, extra: dict | None = None,
+                    spec: models.ModelSpec | None = None, elo: int | None = None) -> dict:
+    spec = spec or models.resolve(models.DEFAULT)
     over = {**extra, "fen": board.fen()} if extra else None
     if board.is_checkmate():
         raise APIError(422, "game_over", "no legal moves: checkmate", over)
     if board.is_stalemate():
         raise APIError(422, "game_over", "no legal moves: stalemate", over)
     try:
-        info = await request.app.state.engine.analyse(board, depth)
+        move, info = await request.app.state.engine.analyse(spec, board, depth, elo)
     except EngineUnavailable as exc:
         log.error("%s", exc)
         raise APIError(503, "engine_unavailable", "chess engine is not available") from None
-    pv = info.get("pv") or []
-    if not pv:
-        raise APIError(503, "engine_unavailable", "engine returned no move")
-    score = info["score"].white()
-    return {
-        "best": pv[0].uci(),
-        "san": board.san(pv[0]),
+    score = info["score"].white() if info.get("score") is not None else None
+    result = {
+        "best": move.uci(),
+        "san": board.san(move),
         # Pawns from White's point of view; null when a forced mate is found (see "mate").
-        "eval": None if score.is_mate() else round(score.score() / 100, 2),
-        "mate": score.mate(),
+        "eval": None if score is None or score.is_mate() else round(score.score() / 100, 2),
+        "mate": None if score is None else score.mate(),
         "depth": info.get("depth"),
+        "model": spec.name,
         "fen": board.fen(),
-        **(extra or {}),
     }
+    if elo:
+        result["elo"] = elo
+    return {**result, **(extra or {})}
 
 
 # --- routes ---
@@ -168,8 +191,26 @@ async def get_move(
     request: Request,
     fen: str = Query(..., description="Position in FEN"),
     depth: int = Query(config.DEFAULT_DEPTH, ge=1, le=config.MAX_DEPTH),
+    model: str = Query(models.DEFAULT, description="Move model: stockfish, maia-1100..maia-1900, or a custom one (see GET /models)"),
+    elo: str = Query("", description="stockfish only: play at this rating (1320-3190)"),
 ):
-    return await best_move(request, parse_fen(fen), depth)
+    spec, elo_value = choose_model(model, elo)
+    return await best_move(request, parse_fen(fen), depth, None, spec, elo_value)
+
+
+@app.get("/models")
+async def list_models():
+    """Every move model this server knows, and whether it is installed."""
+    return {
+        "default": models.DEFAULT,
+        "elo_range": [models.MIN_ELO, models.MAX_ELO],
+        "models": [
+            {"name": m.name, "label": m.label, "description": m.description, "installed": m.installed,
+             "human_like": m.human_like, "supports_elo": m.supports_elo,
+             "uses_depth": m.search == "depth", **({"unavailable": m.missing} if m.missing else {})}
+            for m in models.all_models().values()
+        ],
+    }
 
 
 _CASTLING_RE = re.compile(r"^(-|K?Q?k?q?)$")
@@ -192,6 +233,10 @@ _POST_MOVE_FORM = {
                            "description": "auto: chessfen first, photo model as fallback; screenshot: chessfen only; camera: photo model only"},
                 "flip": {"type": "string", "enum": ["auto", "true", "false"], "default": "auto",
                          "description": "Screenshots: true if Black is at the bottom; auto lets chessfen guess"},
+                "model": {"type": "string", "default": models.DEFAULT,
+                          "description": "Move model: stockfish, maia-1100..maia-1900, or a custom one (GET /models)"},
+                "elo": {"type": "integer", "minimum": models.MIN_ELO, "maximum": models.MAX_ELO,
+                        "description": "stockfish only: play at this human rating"},
                 "profile": {"type": "string",
                             "description": "Screenshots: calibration profile name, or builtin for stock chessfen. Default: best saved profile is picked automatically"},
                 "img_out": {"type": "boolean", "default": False,
@@ -249,6 +294,7 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         flip = flip_field in ("true", "1", "yes", "on")
     else:
         raise APIError(422, "invalid_request", "flip: must be auto, true or false")
+    spec, elo_value = choose_model(fields.get("model", "").strip().lower(), fields.get("elo", "").strip())
     profile = fields.get("profile", "").strip().lower() or None
     if profile and profile != calibration.BUILTIN and not calibration.valid_name(profile):
         raise APIError(422, "invalid_request", "profile: not a valid profile name")
@@ -296,7 +342,7 @@ async def analyse_photo(request: Request, fields: dict[str, str], image: bytes |
         extra["hint"] = ("This screenshot was read with chessfen's built-in piece shapes, which often misread "
                          "chess.com pieces. Calibrate once with a start-position screenshot (POST /profiles, "
                          "or 'Calibrate for your screenshots' on the web page) to fix that.")
-    return await best_move(request, check_position(board, {**extra, "fen": fen}), depth, extra)
+    return await best_move(request, check_position(board, {**extra, "fen": fen}), depth, extra, spec, elo_value)
 
 
 # --- calibration profiles ---

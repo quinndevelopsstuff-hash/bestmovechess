@@ -12,3 +12,6 @@ tests/fixtures/*
 
 # Calibration profiles (piece shapes cut from your own screenshots)
 /profiles/
+
+# Maia weights are downloaded separately
+models/maia/
