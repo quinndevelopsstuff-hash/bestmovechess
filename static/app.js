@@ -13,7 +13,7 @@ const els = {
   fileInput: $("file-input"), captureInput: $("capture-input"),
   camera: $("camera"), video: $("video"), snap: $("snap-btn"), cameraCancel: $("camera-cancel"),
   preview: $("preview"), previewImg: $("preview-img"), clearPhoto: $("clear-photo"), overlay: $("overlay"),
-  ep: $("ep"), depth: $("depth"), source: $("source"), go: $("go-btn"),
+  ep: $("ep"), depth: $("depth"), model: $("model"), elo: $("elo"), source: $("source"), go: $("go-btn"),
   fenForm: $("fen-form"), fenInput: $("fen-input"), manual: $("manual-btn"),
   status: $("status"), result: $("result"),
   reviewHead: $("review-head"), reviewTitle: $("review-title"), answer: $("answer"),
@@ -241,6 +241,7 @@ async function readPhoto() {
   form.append("ep", els.ep.value);
   form.append("depth", els.depth.value);
   form.append("source", els.source.value);
+  addEngineFields(form);
   // Unticked means "detect it"; screenshots usually reveal their orientation.
   form.append("flip", $("flip").checked ? "true" : "auto");
   if (els.showDiagram.checked) form.append("img_out", "true");
@@ -272,7 +273,7 @@ async function getMove() {
   setStatus("Thinking…");
   showErrorImage(null);
   try {
-    const r = await request(`move?${new URLSearchParams({ fen, depth: els.depth.value })}`);
+    const r = await request(`move?${new URLSearchParams({ fen, depth: els.depth.value, ...engineParams() })}`);
     state.answers.set(fen, r);
     showAnswer();
     setStatus("");
@@ -295,7 +296,7 @@ async function analyseFen(e) {
   setBusy(true);
   setStatus("Thinking…");
   try {
-    const r = await request(`move?${new URLSearchParams({ fen, depth: els.depth.value })}`);
+    const r = await request(`move?${new URLSearchParams({ fen, depth: els.depth.value, ...engineParams() })}`);
     // Mirror the FEN's side to move, castling and en passant into the controls so edits keep them.
     const [placement, turn, castling, ep] = r.fen.split(" ");
     document.querySelector(`input[name="turn"][value="${turn}"]`).checked = true;
@@ -722,3 +723,39 @@ cal.file.addEventListener("change", async () => {
 });
 
 loadProfiles();
+
+// ---------- move models ----------
+
+// Fields shared by every request that asks for a move.
+function engineParams() {
+  const p = { model: els.model.value };
+  if (els.model.value === "stockfish" && els.elo.value) p.elo = els.elo.value;
+  return p;
+}
+
+function addEngineFields(form) {
+  for (const [k, v] of Object.entries(engineParams())) form.append(k, v);
+}
+
+async function loadModels() {
+  try {
+    const { models } = await request("models");
+    els.model.replaceChildren();
+    for (const m of models.filter((x) => x.installed)) {
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = m.human_like ? `${m.label} (human-like)` : m.label;
+      opt.title = m.description;
+      els.model.append(opt);
+    }
+  } catch { /* keep the default option */ }
+  syncElo();
+}
+
+function syncElo() {
+  els.elo.disabled = els.model.value !== "stockfish";
+  if (els.elo.disabled) els.elo.value = "";
+}
+
+els.model.addEventListener("change", syncElo);
+loadModels();

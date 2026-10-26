@@ -169,7 +169,7 @@ def test_profile_limit(client, monkeypatch):
 
 
 def test_post_move_reports_and_accepts_profile(client, monkeypatch):
-    async def no_engine(request, board, depth, extra=None):   # these tests don't need Stockfish
+    async def no_engine(request, board, depth, extra=None, *rest):   # these tests don't need Stockfish
         return {**extra, "fen": board.fen()}
     monkeypatch.setattr("app.main.best_move", no_engine)
     client.post("/profiles", data={"name": "mine"}, files={"image": ("s.png", png(phone_screenshot(chess.Board(), 640)), "image/png")})

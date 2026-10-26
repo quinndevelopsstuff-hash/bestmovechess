@@ -46,6 +46,8 @@ ERRORS = {
     "invalid_fen": ("Invalid FEN", "The position couldn't be read."),
     "engine_unavailable": ("Engine error", "The chess engine isn't available right now."),
     "invalid_request": ("Bad request", "A parameter is missing or out of range."),
+    "unknown_model": ("Unknown model", "That move model doesn't exist. GET /models lists them."),
+    "model_unavailable": ("Model not installed", "That move model isn't installed on this server."),
     "too_large": ("Image too large", "The photo is over the upload limit."),
     "error": ("Something went wrong", "The request couldn't be completed."),
 }

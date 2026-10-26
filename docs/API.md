@@ -40,6 +40,8 @@ Best move for a position.
 |-------------|----------|---------|-----------------------------------------------|
 | `fen`       | yes      |         | Full FEN (all six fields recommended)         |
 | `depth`     | no       | `15`    | Search depth, 1 to `MAX_DEPTH` (default 25)   |
+| `model`     | no       | `stockfish` | Move model: `stockfish`, `maia-1100`…`maia-1900`, or a custom one. See `GET /models` |
+| `elo`       | no       |         | `stockfish` only: play at this rating, 1320–3190 |
 
 Each search is also capped at `ENGINE_MAX_SECONDS` (default 10 s), so on slow hardware
 the returned `depth` can be lower than requested. Remember to URL-encode the FEN: its
@@ -69,8 +71,16 @@ A forced mate:
 | `san`   | string        | Best move, SAN                                |
 | `eval`  | number / null | Pawns, White's point of view; null when mate  |
 | `mate`  | int / null    | Moves to forced mate (+ White, − Black)       |
-| `depth` | int           | Depth actually reached                        |
+| `depth` | int / null    | Depth actually reached (null or 1 for one-node models such as Maia) |
+| `model` | string        | The move model that answered                  |
+| `elo`   | int           | Only when `elo` was requested                 |
 | `fen`   | string        | The position analysed, normalised             |
+
+## GET /models
+
+Lists the move models: `{"default": "stockfish", "elo_range": [1320, 3190], "models": [{"name", "label", "description", "installed", "human_like", "supports_elo", "uses_depth", "unavailable"?}]}`.
+`unavailable` says what is missing when `installed` is false. Maia models need lc0 and
+weights; see the README ("Move models").
 
 ## POST /move
 
@@ -85,6 +95,8 @@ Send `multipart/form-data`:
 | `ep`       | no       | En passant: the file (`a`-`h`) of a pawn that just moved two squares. Default none |
 | `depth`    | no       | As for `GET`                                                         |
 | `img_out`  | no       | `true`/`false` (default `false`). When true, the response also has `image_url` (see below) |
+| `model`    | no       | As for `GET /move`: `stockfish` (default), `maia-*`, or a custom model |
+| `elo`      | no       | As for `GET /move` (`stockfish` only)                                |
 | `flip`     | no       | Screenshots: `auto` (default) lets chessfen guess whether Black is at the bottom; `true`/`false` forces it |
 | `source`   | no       | `auto` (default), `screenshot` or `camera`: which recognizer to use (see below) |
 | `profile`  | no       | Screenshots: a saved calibration profile's name, or `builtin` for stock chessfen. Default: the best saved profile is picked automatically (see `/profiles`) |
@@ -329,6 +341,8 @@ It reports that the web server is up. It doesn't check Stockfish or the model.
 | 422    | `illegal_position`        | Valid FEN syntax but impossible position; `detail` says why (e.g. `Black has no king`) |
 | 422    | `game_over`               | Checkmate or stalemate: no move to suggest |
 | 422    | `board_not_found`         | No chessboard found in the photo |
+| 422    | `unknown_model`           | `model` isn't one of `GET /models` |
+| 501    | `model_unavailable`       | The model exists but isn't installed on this server (`detail` says what's missing) |
 | 422    | `unknown_profile`         | `profile` names a calibration profile that doesn't exist |
 | 422    | `calibration_failed`      | `POST /profiles`: the screenshot isn't a clean start position |
 | 409    | `too_many_profiles`       | `POST /profiles`: the limit of 12 is reached |
